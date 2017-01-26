@@ -1,6 +1,11 @@
 #include <Windows.h>
+#include "Engine.h"
 
 int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
-	return 0;
+	bamboo::Engine engine;
+
+	engine.Init();
+
+	return engine.Run();
 }

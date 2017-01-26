@@ -19,7 +19,16 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\Source\Engine.cpp" />
+    <ClCompile Include="..\Source\GraphicsAPIDX11.cpp" />
     <ClCompile Include="..\Source\main.cpp" />
+    <ClCompile Include="..\Source\Renderer.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\Source\Engine.h" />
+    <ClInclude Include="..\Source\GraphicsAPI.h" />
+    <ClInclude Include="..\Source\GraphicsAPIDX11.h" />
+    <ClInclude Include="..\Source\Renderer.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{6226658C-C027-430A-B7AF-CD4282B7A456}</ProjectGuid>
