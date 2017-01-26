@@ -7,8 +7,14 @@
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 
-namespace bamboo
+namespace bamboo::dx11
 {
+	/*class VertexBuffer
+	{
+	public:
+		int Create();
+	};*/
+
 	class GraphicsAPIDX11 : public GraphicsAPI
 	{
 	public:
@@ -20,6 +26,10 @@ namespace bamboo
 		int CreateDevice();
 
 		int InitRenderTarget();
+
+		ID3D11Buffer* CreateVertexBuffer(UINT size, const void* data);
+
+		ID3D11Buffer* CreateIndexBuffer(UINT size, const void* data);
 
 	private:
 

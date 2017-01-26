@@ -19,8 +19,10 @@ namespace
 	}
 }
 
-namespace bamboo
+namespace bamboo::dx11
 {
+
+	
 
 	int GraphicsAPIDX11::Init()
 	{
@@ -225,6 +227,44 @@ namespace bamboo
 			context->OMSetRenderTargets(1, &renderTarget, depthStencil);
 		}
 		return 0;
+	}
+
+	ID3D11Buffer* GraphicsAPIDX11::CreateVertexBuffer(UINT size, const void* data)
+	{
+		ID3D11Buffer* buffer = nullptr;
+		D3D11_BUFFER_DESC desc = {};
+		desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+		desc.ByteWidth = size;
+		desc.Usage = D3D11_USAGE_IMMUTABLE;
+
+		D3D11_SUBRESOURCE_DATA data_desc = {};
+		data_desc.pSysMem = data;
+
+		if (S_OK != device->CreateBuffer(&desc, &data_desc, &buffer))
+		{
+			return nullptr;
+		}
+
+		return buffer;
+	}
+
+	ID3D11Buffer* GraphicsAPIDX11::CreateIndexBuffer(UINT size, const void* data)
+	{
+		ID3D11Buffer* buffer = nullptr;
+		D3D11_BUFFER_DESC desc = {};
+		desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+		desc.ByteWidth = size;
+		desc.Usage = D3D11_USAGE_IMMUTABLE;
+
+		D3D11_SUBRESOURCE_DATA data_desc = {};
+		data_desc.pSysMem = data;
+
+		if (S_OK != device->CreateBuffer(&desc, &data_desc, &buffer))
+		{
+			return nullptr;
+		}
+
+		return buffer;
 	}
 
 }
