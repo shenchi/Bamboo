@@ -25,9 +25,11 @@
     <ClCompile Include="..\Source\Renderer.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\Source\common.h" />
     <ClInclude Include="..\Source\Engine.h" />
     <ClInclude Include="..\Source\GraphicsAPI.h" />
     <ClInclude Include="..\Source\GraphicsAPIDX11.h" />
+    <ClInclude Include="..\Source\HandleAlloc.h" />
     <ClInclude Include="..\Source\Renderer.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">

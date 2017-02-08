@@ -41,5 +41,11 @@
     <ClInclude Include="..\Source\GraphicsAPIDX11.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\Source\common.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Source\HandleAlloc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
