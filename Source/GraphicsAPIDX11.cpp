@@ -159,6 +159,34 @@ namespace bamboo::dx11
 		}
 	};
 
+	struct VertexShaderDX11
+	{
+		ID3D11VertexShader*		shader;
+
+		void Release()
+		{
+			if (nullptr != shader)
+			{
+				shader->Release();
+				shader = nullptr;
+			}
+		}
+	};
+
+	struct PixelShaderDX11
+	{
+		ID3D11PixelShader*		shader;
+
+		void Release()
+		{
+			if (nullptr != shader)
+			{
+				shader->Release();
+				shader = nullptr;
+			}
+		}
+	};
+
 	DXGI_FORMAT InputSlotTypeTable[][4] = 
 	{
 		// COMPONENT_FLOAT
@@ -205,6 +233,9 @@ namespace bamboo::dx11
 		RenderTargetDX11			defaultDepthStencilBuffer;
 
 		TextureDX11					textures[MaxTextureCount];
+
+		VertexShaderDX11			vertexShaders[MaxVertexShaderCount];
+		PixelShaderDX11				pixelShaders[MaxPixelShaderCount];
 
 		int Init()
 		{
@@ -590,9 +621,50 @@ namespace bamboo::dx11
 				return VertexShaderHandle{ invalid_handle };
 			}
 
+			VertexShaderDX11& vs = vertexShaders[handle];
+			vs.shader = shader;
+
 			// TODO Reflect
 
 			return VertexShaderHandle{ handle };
+		}
+
+		void DestroyVertexShader(VertexShaderHandle handle) override
+		{
+			if (!vsHandleAlloc.InUse(handle.id)) return;
+			VertexShaderDX11& vs = vertexShaders[handle.id];
+			vs.Release();
+			vsHandleAlloc.Free(handle.id);
+		}
+
+		PixelShaderHandle CreatePixelShader(const void* bytecode, size_t size) override
+		{
+			uint32_t handle = psHandleAlloc.Alloc();
+
+			if (invalid_handle == handle)
+				return PixelShaderHandle{ invalid_handle };
+
+			ID3D11PixelShader* shader = nullptr;
+			if (FAILED(device->CreatePixelShader(bytecode, size, nullptr, &shader)))
+			{
+				psHandleAlloc.Free(handle);
+				return PixelShaderHandle{ invalid_handle };
+			}
+
+			PixelShaderDX11& ps = pixelShaders[handle];
+			ps.shader = shader;
+
+			// TODO reflect
+
+			return PixelShaderHandle{ handle };
+		}
+
+		void DestroyPixelShader(PixelShaderHandle handle) override
+		{
+			if (!psHandleAlloc.InUse(handle.id)) return;
+			PixelShaderDX11& ps = pixelShaders[handle.id];
+			ps.Release();
+			psHandleAlloc.Free(handle.id);
 		}
 
 #pragma endregion
