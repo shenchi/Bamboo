@@ -8,7 +8,7 @@ namespace bamboo
 	template<size_t size>
 	class HandleAlloc
 	{
-		constexpr uint16 invalid = 0;
+		const uint16_t invalid = UINT16_MAX;
 	public:
 
 		HandleAlloc()
@@ -30,7 +30,7 @@ namespace bamboo
 				++handleCount;
 
 				uint16_t id = handles[index];
-				indices[id] = static_cast<uint16>(index);
+				indices[id] = static_cast<uint16_t>(index);
 
 				return id;
 			}
@@ -49,7 +49,7 @@ namespace bamboo
 			uint16_t last_handle = handles[last_index];
 
 			handles[index] = last_handle;
-			indices[last_handle] = index;
+			indices[last_handle] = static_cast<uint16_t>(index);
 
 			handles[last_index] = handle;
 		}
@@ -59,7 +59,7 @@ namespace bamboo
 			if (handle >= size) return false;
 
 			size_t index = indices[handle];
-			return index < handleCount && handles[index] = handle;
+			return index < handleCount && handles[index] == handle;
 		}
 
 	private:

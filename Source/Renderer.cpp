@@ -1,6 +1,9 @@
 #include "Renderer.h"
 
-int bamboo::Renderer::Init()
+namespace bamboo
 {
-	return 0;
+	Renderer* Renderer::Create()
+	{
+		return nullptr;
+	}
 }

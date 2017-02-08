@@ -8,7 +8,8 @@ namespace bamboo
 	class Renderer
 	{
 	public:
-		int Init();
+		static Renderer* Create();
+
 	};
 
 }

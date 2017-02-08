@@ -4,7 +4,7 @@
 
 int bamboo::Engine::Init()
 {
-	renderer->Init();
+	//renderer->Init();
 	return 0;
 }
 

@@ -3,10 +3,10 @@
 #include "GraphicsAPI.h"
 
 
-namespace bamboo::dx11
+namespace bamboo
 {
-
-
-
-
+	namespace dx11
+	{
+		GraphicsAPI* InitGraphicsAPIDX11(void* windowHandle);
+	}
 }

@@ -159,4 +159,15 @@ namespace bamboo
 		HandleAlloc<MaxVertexShaderCount>		vsHandleAlloc;
 		HandleAlloc<MaxPixelShaderCount>		psHandleAlloc;
 	};
+
+
+	enum GraphicsAPIType
+	{
+		Direct3D11,
+		Direct3D12,
+		GNM
+	};
+
+
+	GraphicsAPI* InitGraphicsAPI(GraphicsAPIType type, void* windowHandle);
 }
