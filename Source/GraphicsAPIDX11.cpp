@@ -5,25 +5,6 @@
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 
-namespace
-{
-	wchar_t g_WindowClassName[] = L"BambooWindow";
-
-	LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
-	{
-		switch (msg)
-		{
-		case WM_DESTROY:
-			PostQuitMessage(0);
-			break;
-		default:
-			return DefWindowProc(hWnd, msg, wParam, lParam);
-		}
-
-		return 0;
-	}
-}
-
 namespace bamboo
 {
 	namespace dx11
@@ -629,7 +610,9 @@ namespace bamboo
 
 			void Draw(const PipelineState& state) override
 			{
+				ID3D11Buffer* vb[MaxVertexBufferCount];
 
+				//context->IASetVertexBuffers()
 			}
 
 #pragma endregion
