@@ -20,14 +20,16 @@ namespace bamboo
 		struct GeometryBufferDX11
 		{
 			ID3D11Buffer*	buffer;
-			size_t			size;
+			UINT			size;
+			UINT			stride;
 			UINT			bindFlags;
 			bool			dynamic;
 
-			inline void Reset(size_t size, UINT bindFlags, bool dynamic)
+			inline void Reset(UINT size, UINT bindFlags, bool dynamic)
 			{
 				Release();
 				this->size = size;
+				this->stride = stride;
 				this->bindFlags = bindFlags;
 				this->dynamic = dynamic;
 			}
@@ -43,13 +45,13 @@ namespace bamboo
 				}
 			}
 
-			inline void Update(ID3D11Device1* device, ID3D11DeviceContext1* context, size_t size, const void* data)
+			inline void Update(ID3D11Device1* device, ID3D11DeviceContext1* context, UINT size, UINT stride, const void* data)
 			{
 				if (nullptr == buffer)
 				{
 					D3D11_BUFFER_DESC desc = {};
 					desc.BindFlags = bindFlags;
-					desc.ByteWidth = static_cast<UINT>(size);
+					desc.ByteWidth = size;
 					desc.Usage = dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_IMMUTABLE;
 
 					D3D11_SUBRESOURCE_DATA data_desc = {};
@@ -60,6 +62,9 @@ namespace bamboo
 						// error
 						return;
 					}
+
+					if (stride > 0)
+						this->stride = stride;
 				}
 				else if (dynamic)
 				{
@@ -67,6 +72,9 @@ namespace bamboo
 					context->Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &res);
 					memcpy(res.pData, data, min(size, this->size));
 					context->Unmap(buffer, 0);
+
+					if (stride > 0)
+						this->stride = stride;
 				}
 				// else error
 			}
@@ -212,42 +220,28 @@ namespace bamboo
 			GeometryBufferDX11			indexBuffers[MaxIndexBufferCount];
 
 			RenderTargetDX11			renderTargets[MaxRenderTargetCount];
-			RenderTargetDX11			defaultColorBuffer; // TODO
-			RenderTargetDX11			defaultDepthStencilBuffer;
 
 			TextureDX11					textures[MaxTextureCount];
 
 			VertexShaderDX11			vertexShaders[MaxVertexShaderCount];
 			PixelShaderDX11				pixelShaders[MaxPixelShaderCount];
 
+			RenderTargetHandle			defaultColorBuffer;
+			RenderTargetHandle			defaultDepthStencilBuffer;
+
 			int Init(void* windowHandle)
 			{
 				hWnd = reinterpret_cast<HWND>(windowHandle);
 
-				int result = CreateDevice();
+				int result = 0;
 
-				if (0 != result)
-				{
+				if (0 != (result = CreateDevice()))
 					return result;
-				}
 
-				result = InitRenderTarget();
-
-				if (0 != result)
-				{
+				if (0 != (result = InitRenderTargets()))
 					return result;
-				}
 
-				// TODO initialize pipeline states
-				{
-					D3D11_VIEWPORT viewport{
-						0.0f, 0.0f,
-						static_cast<float>(width),
-						static_cast<float>(height),
-						0.0f, 1.0f };
-
-					context->RSSetViewports(1, &viewport);
-				}
+				InitPipelineStates();
 
 				return 0;
 			}
@@ -341,25 +335,39 @@ namespace bamboo
 				return 0;
 			}
 
-			int InitRenderTarget()
+			int InitRenderTargets()
 			{
 				HRESULT hr = S_OK;
 
 				{
-					// TODO
-					defaultColorBuffer.Reset(PixelFormat::AUTO_PIXEL_FORMAT, width, height, false, false);
+					defaultColorBuffer.id = rtHandleAlloc.Alloc();
+					if (0 != defaultColorBuffer.id)
+						return -1;
+
+					RenderTargetDX11& rt = renderTargets[defaultColorBuffer.id];
+
+					rt.Reset(PixelFormat::AUTO_PIXEL_FORMAT, width, height, false, false);
+
 					ID3D11Texture2D* backbufferTex = nullptr;
 					if (S_OK != (hr = swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backbufferTex)))
 					{
 						return -1;
 					}
-					if (S_OK != (hr = device->CreateRenderTargetView(backbufferTex, nullptr, &(defaultColorBuffer.renderTargetView))))
+					if (S_OK != (hr = device->CreateRenderTargetView(backbufferTex, nullptr, &(rt.renderTargetView))))
 					{
 						return -1;
 					}
 					backbufferTex->Release();
+				}
 
-					defaultDepthStencilBuffer.Reset(PixelFormat::D24_UNORM_S8_UINT, width, height, true, true);
+				{
+					defaultDepthStencilBuffer.id = rtHandleAlloc.Alloc();
+					if (1 != defaultDepthStencilBuffer.id)
+						return -1;
+
+					RenderTargetDX11& ds = renderTargets[defaultDepthStencilBuffer.id];
+
+					ds.Reset(PixelFormat::D24_UNORM_S8_UINT, width, height, true, true);
 					ID3D11Texture2D* depthStencilTex = nullptr;
 					D3D11_TEXTURE2D_DESC depthDesc{ 0 };
 					depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
@@ -375,17 +383,28 @@ namespace bamboo
 						return -1;
 					}
 
-					if (S_OK != (hr = device->CreateDepthStencilView(depthStencilTex, nullptr, &(defaultDepthStencilBuffer.depthStencilView))))
+					if (S_OK != (hr = device->CreateDepthStencilView(depthStencilTex, nullptr, &(ds.depthStencilView))))
 					{
 						return -1;
 					}
 
 					depthStencilTex->Release();
-
-					context->OMSetRenderTargets(1, &(defaultColorBuffer.renderTargetView), defaultDepthStencilBuffer.depthStencilView);
 				}
 
 				return 0;
+			}
+
+			void InitPipelineStates()
+			{
+				{
+					D3D11_VIEWPORT viewport{
+						0.0f, 0.0f,
+						static_cast<float>(width),
+						static_cast<float>(height),
+						0.0f, 1.0f };
+
+					context->RSSetViewports(1, &viewport);
+				}
 			}
 
 			// interface implementation
@@ -453,11 +472,11 @@ namespace bamboo
 				vbHandleAlloc.Free(handle.id);
 			}
 
-			void UpdateVertexBuffer(VertexBufferHandle handle, size_t size, const void* data) override
+			void UpdateVertexBuffer(VertexBufferHandle handle, size_t size, size_t stride, const void* data) override
 			{
 				if (!vbHandleAlloc.InUse(handle.id)) return;
 				GeometryBufferDX11& vb = vertexBuffers[handle.id];
-				vb.Update(device, context, size, data);
+				vb.Update(device, context, size, stride, data);
 			}
 
 			IndexBufferHandle GraphicsAPIDX11::CreateIndexBuffer(size_t size, bool dynamic) override
@@ -485,7 +504,7 @@ namespace bamboo
 			{
 				if (!ibHandleAlloc.InUse(handle.id)) return;
 				GeometryBufferDX11& ib = indexBuffers[handle.id];
-				ib.Update(device, context, size, data);
+				ib.Update(device, context, size, 0, data);
 			}
 
 			RenderTargetHandle CreateRenderTarget(PixelFormat format, uint32_t width, uint32_t height, bool isDepth, bool hasStencil) override
@@ -610,9 +629,41 @@ namespace bamboo
 
 			void Draw(const PipelineState& state) override
 			{
-				ID3D11Buffer* vb[MaxVertexBufferCount];
+				if (state.VertexBufferCount > 0)
+				{
+					ID3D11Buffer*	vb[MaxVertexBufferBindingSlot];
+					UINT			strides[MaxVertexBufferBindingSlot];
+					UINT			offsets[MaxVertexBufferBindingSlot];
 
-				//context->IASetVertexBuffers()
+					for (size_t i = 0; i < state.VertexBufferCount; ++i)
+					{
+						uint16_t handle = state.VertexBuffers[i].id;
+
+#if _DEBUG
+						if (!vbHandleAlloc.InUse(handle))
+							return;
+#endif
+
+						vb[i] = vertexBuffers[handle].buffer;
+						strides[i] = vertexBuffers[handle].stride;
+						offsets[i] = 0;
+					}
+
+					context->IASetVertexBuffers(0, state.VertexBufferCount, vb, strides, offsets);
+				}
+
+				if (state.HasIndexBuffer)
+				{
+					uint16_t handle = state.IndexBuffer.id;
+
+#if _DEBUG
+					if (!ibHandleAlloc.InUse(handle))
+						return;
+#endif
+
+					// TODO
+					context->IASetIndexBuffer(indexBuffers[handle].buffer, DXGI_FORMAT_R32_UINT, 0);
+				}
 			}
 
 #pragma endregion

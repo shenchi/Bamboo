@@ -88,20 +88,31 @@ namespace bamboo
 	};
 #pragma pack(pop)
 
-#pragma pack(push, 1)
-	struct PipelineStateSwitches
+#pragma pack(push, 4)
+	struct Viewport
 	{
-		uint32_t				VertexBufferCount : 16;
-		uint32_t				HasIndexBuffer : 1;
-		uint32_t				HasVertexShader : 1;
-		uint32_t				HasPixelShader : 1;
-		uint32_t				Reserved : 13;
+		float X, Y;
+		float Width, Height;
+		float ZMin, ZMax;
 	};
 #pragma pack(pop)
 
 #pragma pack(push, 1)
 	struct PipelineState
 	{
+		union
+		{
+			struct
+			{
+				uint32_t			VertexBufferCount : 16;
+				uint32_t			HasIndexBuffer : 1;
+				uint32_t			HasVertexShader : 1;
+				uint32_t			HasPixelShader : 1;
+				uint32_t			_Reserved : 13;
+			};
+			uint32_t				InfoBits;
+		};
+
 		VertexBufferHandle			VertexBuffers[MaxVertexBufferBindingSlot];
 		IndexBufferHandle			IndexBuffer;
 
@@ -112,11 +123,8 @@ namespace bamboo
 
 		PrimitiveType				PrimitiveType;
 
-		union
-		{
-			PipelineStateSwitches	Switches;
-			uint32_t				Switches_raw;
-		};
+		Viewport					Viewport;
+
 	};
 #pragma pack(pop)
 
@@ -129,7 +137,7 @@ namespace bamboo
 		// Buffers
 		virtual VertexBufferHandle CreateVertexBuffer(size_t size, bool dynamic) = 0;
 		virtual void DestroyVertexBuffer(VertexBufferHandle handle) = 0;
-		virtual void UpdateVertexBuffer(VertexBufferHandle handle, size_t size, const void* data) = 0;
+		virtual void UpdateVertexBuffer(VertexBufferHandle handle, size_t size, size_t stride, const void* data) = 0;
 
 		virtual IndexBufferHandle CreateIndexBuffer(size_t size, bool dynamic) = 0;
 		virtual void DestroyIndexBuffer(IndexBufferHandle handle) = 0;
