@@ -21,7 +21,7 @@ namespace bamboo
 
 	enum PrimitiveType
 	{
-		POINT,
+		POINTS,
 		LINES,
 		TRIANGLES,
 		NUM_PRIMITIVE_TYPE
@@ -58,7 +58,7 @@ namespace bamboo
 		COMPONENT_FLOAT,
 	};
 
-	constexpr size_t MaxVertexInputSlot = 8;
+	constexpr size_t MaxVertexInputElement = 16;
 	constexpr size_t MaxVertexBufferBindingSlot = 8;
 	constexpr size_t MaxRenderTargetBindingSlot = 8;
 
@@ -71,20 +71,21 @@ namespace bamboo
 	constexpr size_t MaxPixelShaderCount = 1024;
 
 #pragma pack(push, 1)
-	struct VertexInputSlot
+	struct VertexInputElement
 	{
 		uint16_t				SemanticId : 4;
 		uint16_t				ComponentCount : 2;
 		uint16_t				ComponentType : 3;
-		uint16_t				Reserved : 7;
+		uint16_t				Reserved : 3;
+		uint16_t				BindingSlot : 4;
 	};
 #pragma pack(pop)
 
 #pragma pack(push, 1)
 	struct VertexLayout
 	{
-		VertexInputSlot			Slots[MaxVertexInputSlot];
-		uint16_t				SlotCount;
+		VertexInputElement		Elements[MaxVertexInputElement];
+		uint16_t				ElementCount;
 	};
 #pragma pack(pop)
 
@@ -121,10 +122,9 @@ namespace bamboo
 		VertexShaderHandle			VertexShader;
 		PixelShaderHandle			PixelShader;
 
-		PrimitiveType				PrimitiveType;
-
 		Viewport					Viewport;
 
+		PrimitiveType				PrimitiveType;
 	};
 #pragma pack(pop)
 
@@ -156,7 +156,8 @@ namespace bamboo
 		virtual void DestroyPixelShader(PixelShaderHandle handle) = 0;
 
 		// Draw Functions
-		virtual void Draw(const PipelineState& state) = 0;
+		virtual void Draw(const PipelineState& state, uint32_t vertexCount) = 0;
+		virtual void DrawIndex(const PipelineState& state, uint32_t indexCount) = 0;
 
 		PipelineState							internalState;
 		HandleAlloc<MaxVertexLayoutCount>		vlHandleAlloc;

@@ -12,9 +12,8 @@ namespace bamboo
 
 		struct VertexLayoutDX11
 		{
-			D3D11_INPUT_ELEMENT_DESC	elements[MaxVertexInputSlot];
+			D3D11_INPUT_ELEMENT_DESC	elements[MaxVertexInputElement];
 			uint16_t					elementCount;
-			uint16_t					stride;
 		};
 
 		struct GeometryBufferDX11
@@ -154,6 +153,8 @@ namespace bamboo
 		struct VertexShaderDX11
 		{
 			ID3D11VertexShader*		shader;
+			void*					byteCode;
+			SIZE_T					length;
 
 			void Release()
 			{
@@ -161,6 +162,9 @@ namespace bamboo
 				{
 					shader->Release();
 					shader = nullptr;
+
+					delete[] reinterpret_cast<uint8_t*>(byteCode);
+					byteCode = nullptr;
 				}
 			}
 		};
@@ -201,6 +205,13 @@ namespace bamboo
 			"TEXCOORD1",
 			"TEXCOORD2",
 			"TEXCOORD3",
+		};
+
+		D3D11_PRIMITIVE_TOPOLOGY PrimitiveTypeTable[] =
+		{
+			D3D11_PRIMITIVE_TOPOLOGY_POINTLIST,
+			D3D11_PRIMITIVE_TOPOLOGY_LINELIST,
+			D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
 		};
 
 		struct GraphicsAPIDX11 : public GraphicsAPI
@@ -407,6 +418,106 @@ namespace bamboo
 				}
 			}
 
+			void SetPipelineStates(const PipelineState& state)
+			{
+				// Input Assembly
+				context->IASetPrimitiveTopology(PrimitiveTypeTable[state.PrimitiveType]);
+
+				if (state.VertexBufferCount > 0)
+				{
+					ID3D11Buffer*	vb[MaxVertexBufferBindingSlot];
+					UINT			strides[MaxVertexBufferBindingSlot];
+					UINT			offsets[MaxVertexBufferBindingSlot];
+
+					for (size_t i = 0; i < state.VertexBufferCount; ++i)
+					{
+						uint16_t handle = state.VertexBuffers[i].id;
+#if _DEBUG
+						if (!vbHandleAlloc.InUse(handle))
+							return;
+#endif
+
+						vb[i] = vertexBuffers[handle].buffer;
+						strides[i] = vertexBuffers[handle].stride;
+						offsets[i] = 0;
+					}
+
+					context->IASetVertexBuffers(0, state.VertexBufferCount, vb, strides, offsets);
+				}
+
+				if (state.HasIndexBuffer)
+				{
+					uint16_t handle = state.IndexBuffer.id;
+#if _DEBUG
+					if (!ibHandleAlloc.InUse(handle))
+						return;
+#endif
+
+					// TODO
+					context->IASetIndexBuffer(indexBuffers[handle].buffer, DXGI_FORMAT_R32_UINT, 0);
+				}
+
+				// Vertex Shader & Input Layout
+				{
+					uint16_t handle = state.VertexShader.id;
+#if _DEBUG
+					if (!vsHandleAlloc.InUse(handle))
+						return;
+#endif
+					VertexShaderDX11& vs = vertexShaders[handle];
+					context->VSSetShader(vs.shader, nullptr, 0);
+
+					{
+						uint16_t handle = state.VertexLayout.id;
+#if _DEBUG
+						if (!vlHandleAlloc.InUse(handle))
+							return;
+#endif
+
+						ID3D11InputLayout* layout = nullptr;
+
+						if (FAILED(device->CreateInputLayout(
+							vertexLayouts[handle].elements,
+							vertexLayouts[handle].elementCount,
+							vs.byteCode,
+							vs.length,
+							&layout
+						)))
+						{
+							return;
+						}
+
+						context->IASetInputLayout(layout);
+					}
+				}
+
+				// Rasterizer
+				{
+					D3D11_VIEWPORT vp =
+					{
+						state.Viewport.X,
+						state.Viewport.Y,
+						state.Viewport.Width,
+						state.Viewport.Height,
+						state.Viewport.ZMin,
+						state.Viewport.ZMax
+					};
+
+					context->RSSetViewports(1, &vp);
+				}
+
+				// Pixel Shader
+				{
+					uint16_t handle = state.PixelShader.id;
+#if _DEBUG
+					if (!psHandleAlloc.InUse(handle))
+						return;
+#endif
+					PixelShaderDX11& ps = pixelShaders[handle];
+					context->PSSetShader(ps.shader, nullptr, 0);
+				}
+			}
+
 			// interface implementation
 #pragma region interface implementation
 
@@ -418,29 +529,32 @@ namespace bamboo
 
 				VertexLayoutDX11& vl = vertexLayouts[handle];
 
-				vl.elementCount = layout.SlotCount;
+				vl.elementCount = layout.ElementCount;
 
 				UINT offset = 0;
+				UINT lastSlot = 0;
 
-				for (size_t i = 0; i < layout.SlotCount; ++i)
+				for (size_t i = 0; i < layout.ElementCount; ++i)
 				{
-					VertexInputSlot& slot = layout.Slots[i];
+					VertexInputElement& elem = layout.Elements[i];
 					D3D11_INPUT_ELEMENT_DESC& desc = vl.elements[i];
 
-					size_t size = InputSlotSizeTable[slot.ComponentType] * (slot.ComponentCount + 1);
+					size_t size = InputSlotSizeTable[elem.ComponentType] * (elem.ComponentCount + 1);
+
+					if (elem.BindingSlot != lastSlot)
+						offset = 0;
 
 					desc.AlignedByteOffset = offset;
-					desc.Format = InputSlotTypeTable[slot.ComponentType][slot.ComponentCount];
-					desc.InputSlot = 0; // TODO
+					desc.Format = InputSlotTypeTable[elem.ComponentType][elem.ComponentCount];
+					desc.InputSlot = elem.BindingSlot;
 					desc.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
 					desc.InstanceDataStepRate = 0;
 					desc.SemanticIndex = 0;
-					desc.SemanticName = InputSemanticsTable[slot.SemanticId];
+					desc.SemanticName = InputSemanticsTable[elem.SemanticId];
 
 					offset += static_cast<UINT>(size);
+					lastSlot = elem.BindingSlot;
 				}
-
-				vl.stride = offset;
 
 				return VertexLayoutHandle{ handle };
 			}
@@ -583,6 +697,9 @@ namespace bamboo
 
 				VertexShaderDX11& vs = vertexShaders[handle];
 				vs.shader = shader;
+				vs.byteCode = reinterpret_cast<void*>(new uint8_t[size]); // TODO
+				memcpy(vs.byteCode, bytecode, size);
+				vs.length = size;
 
 				// TODO Reflect
 
@@ -627,43 +744,16 @@ namespace bamboo
 				psHandleAlloc.Free(handle.id);
 			}
 
-			void Draw(const PipelineState& state) override
+			void Draw(const PipelineState& state, uint32_t vertexCount) override
 			{
-				if (state.VertexBufferCount > 0)
-				{
-					ID3D11Buffer*	vb[MaxVertexBufferBindingSlot];
-					UINT			strides[MaxVertexBufferBindingSlot];
-					UINT			offsets[MaxVertexBufferBindingSlot];
+				SetPipelineStates(state);
+				context->Draw(vertexCount, 0);
+			}
 
-					for (size_t i = 0; i < state.VertexBufferCount; ++i)
-					{
-						uint16_t handle = state.VertexBuffers[i].id;
-
-#if _DEBUG
-						if (!vbHandleAlloc.InUse(handle))
-							return;
-#endif
-
-						vb[i] = vertexBuffers[handle].buffer;
-						strides[i] = vertexBuffers[handle].stride;
-						offsets[i] = 0;
-					}
-
-					context->IASetVertexBuffers(0, state.VertexBufferCount, vb, strides, offsets);
-				}
-
-				if (state.HasIndexBuffer)
-				{
-					uint16_t handle = state.IndexBuffer.id;
-
-#if _DEBUG
-					if (!ibHandleAlloc.InUse(handle))
-						return;
-#endif
-
-					// TODO
-					context->IASetIndexBuffer(indexBuffers[handle].buffer, DXGI_FORMAT_R32_UINT, 0);
-				}
+			void DrawIndex(const PipelineState& state, uint32_t indexCount) override
+			{
+				SetPipelineStates(state);
+				context->DrawIndexed(indexCount, 0, 0);
 			}
 
 #pragma endregion
