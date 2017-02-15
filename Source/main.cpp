@@ -78,7 +78,20 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 	bamboo::PipelineState state = {};
 
-	// TODO state
+	state.VertexBufferCount = 1;
+	state.HasVertexShader = 1;
+	state.HasPixelShader = 1;
+
+	state.VertexBuffers[0] = vb;
+	
+	state.VertexShader = vs;
+	state.PixelShader = ps;
+
+	state.VertexLayout = vl;
+
+	state.Viewport = {0, 0, 800, 600, 0.0f, 1.0f};
+
+	state.PrimitiveType = bamboo::TRIANGLES;
 
 	while (win.ProcessEvent())
 	{

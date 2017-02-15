@@ -525,7 +525,7 @@ namespace bamboo
 			{
 				uint16_t handle = vlHandleAlloc.Alloc();
 
-				if (invalid_handle != handle) return VertexLayoutHandle{ invalid_handle };
+				if (invalid_handle == handle) return VertexLayoutHandle{ invalid_handle };
 
 				VertexLayoutDX11& vl = vertexLayouts[handle];
 
@@ -572,7 +572,7 @@ namespace bamboo
 				if (handle != invalid_handle)
 				{
 					GeometryBufferDX11& vb = vertexBuffers[handle];
-					vb.Reset(size, D3D11_BIND_VERTEX_BUFFER, dynamic);
+					vb.Reset(static_cast<UINT>(size), D3D11_BIND_VERTEX_BUFFER, dynamic);
 				}
 
 				return VertexBufferHandle{ handle };
@@ -590,7 +590,7 @@ namespace bamboo
 			{
 				if (!vbHandleAlloc.InUse(handle.id)) return;
 				GeometryBufferDX11& vb = vertexBuffers[handle.id];
-				vb.Update(device, context, size, stride, data);
+				vb.Update(device, context, static_cast<UINT>(size), static_cast<UINT>(stride), data);
 			}
 
 			IndexBufferHandle GraphicsAPIDX11::CreateIndexBuffer(size_t size, bool dynamic) override
@@ -600,7 +600,7 @@ namespace bamboo
 				if (handle != invalid_handle)
 				{
 					GeometryBufferDX11& ib = indexBuffers[handle];
-					ib.Reset(size, D3D11_BIND_INDEX_BUFFER, dynamic);
+					ib.Reset(static_cast<UINT>(size), D3D11_BIND_INDEX_BUFFER, dynamic);
 				}
 
 				return IndexBufferHandle{ handle };
@@ -618,7 +618,7 @@ namespace bamboo
 			{
 				if (!ibHandleAlloc.InUse(handle.id)) return;
 				GeometryBufferDX11& ib = indexBuffers[handle.id];
-				ib.Update(device, context, size, 0, data);
+				ib.Update(device, context, static_cast<UINT>(size), 0, data);
 			}
 
 			RenderTargetHandle CreateRenderTarget(PixelFormat format, uint32_t width, uint32_t height, bool isDepth, bool hasStencil) override
