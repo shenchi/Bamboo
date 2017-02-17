@@ -488,6 +488,8 @@ namespace bamboo
 						}
 
 						context->IASetInputLayout(layout);
+
+						layout->Release();
 					}
 				}
 
@@ -516,6 +518,51 @@ namespace bamboo
 					PixelShaderDX11& ps = pixelShaders[handle];
 					context->PSSetShader(ps.shader, nullptr, 0);
 				}
+
+				// Render Target
+				if (state.RenderTargetCount > 0 || state.HasDepthStencil)
+				{
+					ID3D11RenderTargetView* rtvs[MaxRenderTargetBindingSlot];
+					ID3D11DepthStencilView* dsv = nullptr;
+
+					for (size_t i = 0; i < state.RenderTargetCount; ++i)
+					{
+						uint16_t handle = state.RenderTargets[i].id;
+#if _DEBUG
+						if (!rtHandleAlloc.InUse(handle))
+							return;
+#endif
+						auto rt = renderTargets[handle];
+						if (rt.isDepth)
+							return;
+
+						rtvs[i] = rt.renderTargetView;
+					}
+
+					if (state.HasDepthStencil)
+					{
+						uint16_t handle = state.DepthStencil.id;
+#if _DEBUG
+						if (!rtHandleAlloc.InUse(handle))
+							return;
+#endif
+						auto rt = renderTargets[handle];
+						if (!rt.isDepth)
+							return;
+
+						dsv = rt.depthStencilView;
+					}
+
+					context->OMSetRenderTargets(state.RenderTargetCount, rtvs, dsv);
+				}
+				else
+				{
+					ID3D11RenderTargetView* rtv = renderTargets[defaultColorBuffer.id].renderTargetView;
+					ID3D11DepthStencilView* dsv = renderTargets[defaultDepthStencilBuffer.id].depthStencilView;
+					context->OMSetRenderTargets(1, &rtv, dsv);
+				}
+
+				internalState = state;
 			}
 
 			// interface implementation
@@ -681,6 +728,32 @@ namespace bamboo
 				rtHandleAlloc.Free(handle.id);
 			}
 
+			void Clear(RenderTargetHandle handle, float color[4]) override
+			{
+				if (!rtHandleAlloc.InUse(handle.id)) return;
+				RenderTargetDX11& rt = renderTargets[handle.id];
+				if (rt.isDepth) return;
+				context->ClearRenderTargetView(rt.renderTargetView, color);
+			}
+
+			void ClearDepth(RenderTargetHandle handle, float depth) override
+			{
+				if (!rtHandleAlloc.InUse(handle.id)) 
+					handle = defaultColorBuffer; // TODO
+				RenderTargetDX11& rt = renderTargets[handle.id];
+				if (!rt.isDepth) return;
+				context->ClearDepthStencilView(rt.depthStencilView, D3D11_CLEAR_DEPTH, depth, 0);
+			}
+
+			void ClearDepthStencil(RenderTargetHandle handle, float depth, uint8_t stencil) override
+			{
+				if (!rtHandleAlloc.InUse(handle.id))
+					handle = defaultDepthStencilBuffer; // TODO
+				RenderTargetDX11& rt = renderTargets[handle.id];
+				if (!rt.isDepth || !rt.hasStencil) return;
+				context->ClearDepthStencilView(rt.depthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, depth, stencil);
+			}
+
 			VertexShaderHandle CreateVertexShader(const void* bytecode, size_t size) override
 			{
 				uint16_t handle = vsHandleAlloc.Alloc();
@@ -754,6 +827,31 @@ namespace bamboo
 			{
 				SetPipelineStates(state);
 				context->DrawIndexed(indexCount, 0, 0);
+			}
+
+			void Present() override
+			{
+				swapChain->Present(0, 0);
+			}
+
+			void Shutdown() override
+			{
+#define CLEAR_ARRAY(arr, count, alloc) \
+				for (uint16_t handle = 0; handle < count; ++handle) \
+					if (alloc.InUse(handle)) arr[handle].Release();
+
+				CLEAR_ARRAY(vertexBuffers, MaxVertexBufferCount, vbHandleAlloc);
+				CLEAR_ARRAY(indexBuffers, MaxIndexBufferCount, ibHandleAlloc);
+				CLEAR_ARRAY(renderTargets, MaxRenderTargetCount, rtHandleAlloc);
+				CLEAR_ARRAY(textures, MaxTextureCount, texHandleAlloc);
+				CLEAR_ARRAY(vertexShaders, MaxVertexShaderCount, vsHandleAlloc);
+				CLEAR_ARRAY(pixelShaders, MaxPixelShaderCount, psHandleAlloc);
+
+#undef CLEAR_ARRAY
+				
+				swapChain->Release();
+				context->Release();
+				device->Release();
 			}
 
 #pragma endregion

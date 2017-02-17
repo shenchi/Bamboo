@@ -10,7 +10,7 @@
 
 #include <cstdio>
 
-struct Memory 
+struct Memory
 {
 	void*	ptr;
 	size_t	size;
@@ -32,7 +32,7 @@ Memory LoadFile(const char* filename)
 	fseek(fp, 0, SEEK_END);
 	size_t length = ftell(fp);
 	fseek(fp, 0, SEEK_SET);
-	
+
 	Memory mem(length);
 	size_t length_read = fread(mem.ptr, 1, length, fp);
 	fclose(fp);
@@ -52,14 +52,15 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	if (nullptr == api)
 		return -1;
 
-	float vertices[] = 
+	float vertices[] =
 	{
 		0.0f, 0.5f, 0.0f,
 		0.5f, -0.25f, 0.0f,
-		-0.5f, -0.25f, 0.0f
+		-0.5f, -0.25f, 0.0f,
 	};
 
 	auto vb = api->CreateVertexBuffer(sizeof(vertices), false);
+	api->UpdateVertexBuffer(vb, sizeof(vertices), sizeof(float) * 3, reinterpret_cast<void*>(vertices));
 
 	auto vs_byte = LoadFile("vs_simple.cso");
 	auto ps_byte = LoadFile("ps_simple.cso");
@@ -69,9 +70,9 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 	bamboo::VertexLayout layout = {};
 	layout.ElementCount = 1;
-	layout.Elements[0] = 
+	layout.Elements[0] =
 	{
-		bamboo::POSITION, 3, bamboo::COMPONENT_FLOAT, 0, 0
+		bamboo::POSITION, 3 - 1 /* 0~3 stands for 1~4 */, bamboo::COMPONENT_FLOAT, 0, 0
 	};
 
 	auto vl = api->CreateVertexLayout(layout);
@@ -83,20 +84,28 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	state.HasPixelShader = 1;
 
 	state.VertexBuffers[0] = vb;
-	
+
 	state.VertexShader = vs;
 	state.PixelShader = ps;
 
 	state.VertexLayout = vl;
 
-	state.Viewport = {0, 0, 800, 600, 0.0f, 1.0f};
+	state.Viewport = { 0, 0, 800, 600, 0.0f, 1.0f };
 
 	state.PrimitiveType = bamboo::TRIANGLES;
 
+	float clearColor[] = { 0.7f, 0.7f, 0.7f, 1.0f };
+	auto invalidRTHandle = bamboo::RenderTargetHandle{ bamboo::invalid_handle }; // TODO
+
 	while (win.ProcessEvent())
 	{
+		api->Clear(invalidRTHandle, clearColor);
+		api->ClearDepthStencil(invalidRTHandle, 1.0f, 0);
 		api->Draw(state, 3);
+		api->Present();
 	}
+
+	api->Shutdown();
 
 	return 0;
 }

@@ -74,7 +74,7 @@ namespace bamboo
 	struct VertexInputElement
 	{
 		uint16_t				SemanticId : 4;
-		uint16_t				ComponentCount : 2;
+		uint16_t				ComponentCount : 2;  // 0 ~ 3 stands for 1 ~ 4
 		uint16_t				ComponentType : 3;
 		uint16_t				Reserved : 3;
 		uint16_t				BindingSlot : 4;
@@ -105,11 +105,13 @@ namespace bamboo
 		{
 			struct
 			{
-				uint32_t			VertexBufferCount : 16;
+				uint32_t			VertexBufferCount : 8;
+				uint32_t			RenderTargetCount : 8;
 				uint32_t			HasIndexBuffer : 1;
 				uint32_t			HasVertexShader : 1;
 				uint32_t			HasPixelShader : 1;
-				uint32_t			_Reserved : 13;
+				uint32_t			HasDepthStencil : 1;
+				uint32_t			_Reserved : 12;
 			};
 			uint32_t				InfoBits;
 		};
@@ -121,6 +123,10 @@ namespace bamboo
 
 		VertexShaderHandle			VertexShader;
 		PixelShaderHandle			PixelShader;
+
+		RenderTargetHandle			RenderTargets[MaxRenderTargetBindingSlot];
+		RenderTargetHandle			DepthStencil;
+
 
 		Viewport					Viewport;
 
@@ -143,8 +149,13 @@ namespace bamboo
 		virtual void DestroyIndexBuffer(IndexBufferHandle handle) = 0;
 		virtual void UpdateIndexBuffer(IndexBufferHandle handle, size_t size, const void* data) = 0;
 
+		// Render targets
 		virtual RenderTargetHandle CreateRenderTarget(PixelFormat format, uint32_t width, uint32_t height, bool isDepth, bool hasStencil) = 0;
 		virtual void DestroyRenderTarget(RenderTargetHandle handle) = 0;
+
+		virtual void Clear(RenderTargetHandle handle, float color[4]) = 0;
+		virtual void ClearDepth(RenderTargetHandle handle, float depth) = 0;
+		virtual void ClearDepthStencil(RenderTargetHandle handle, float depth, uint8_t stencil) = 0;
 
 		// Textures
 
@@ -158,6 +169,13 @@ namespace bamboo
 		// Draw Functions
 		virtual void Draw(const PipelineState& state, uint32_t vertexCount) = 0;
 		virtual void DrawIndex(const PipelineState& state, uint32_t indexCount) = 0;
+
+		// Swap Chains
+		// TODO, bind swap chains with render targets
+		virtual void Present() = 0;
+
+		// Clean up
+		virtual void Shutdown() = 0;
 
 		PipelineState							internalState;
 		HandleAlloc<MaxVertexLayoutCount>		vlHandleAlloc;
