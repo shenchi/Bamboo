@@ -12,6 +12,7 @@ namespace bamboo
 	HANDLE_DECLARE(VertexLayout);
 	HANDLE_DECLARE(VertexBuffer);
 	HANDLE_DECLARE(IndexBuffer);
+	HANDLE_DECLARE(ConstantBuffer);
 	HANDLE_DECLARE(RenderTarget);
 	HANDLE_DECLARE(Texture);
 	HANDLE_DECLARE(VertexShader);
@@ -21,50 +22,58 @@ namespace bamboo
 
 	enum PrimitiveType
 	{
-		POINTS,
-		LINES,
-		TRIANGLES,
+		PRIMITIVE_POINTS,
+		PRIMITIVE_LINES,
+		PRIMITIVE_TRIANGLES,
 		NUM_PRIMITIVE_TYPE
 	};
 
 	enum PixelFormat
 	{
-		AUTO_PIXEL_FORMAT,
-		R8G8B8A8_UNORM,
-		R8G8B8A8_SNORM,
-		R16_INT,
-		R32_INT,
-		R16_UINT,
-		R32_UINT,
-		D24_UNORM_S8_UINT,
+		FORMAT_AUTO,
+		FORMAT_R8G8B8A8_UNORM,
+		FORMAT_R8G8B8A8_SNORM,
+		FORMAT_R16_INT,
+		FORMAT_R32_INT,
+		FORMAT_R16_UINT,
+		FORMAT_R32_UINT,
+		FORMAT_D24_UNORM_S8_UINT,
 		NUM_PIXEL_FORMAT
 	};
 
-	enum VertexInputSemantics
+	enum Semantics
 	{
-		POSITION,
-		COLOR,
-		NORMAL,
-		TANGENT,
-		BINORMAL,
-		TEXCOORD0,
-		TEXCOORD1,
-		TEXCOORD2,
-		TEXCOORD3,
+		SEMANTIC_POSITION,
+		SEMANTIC_COLOR,
+		SEMANTIC_NORMAL,
+		SEMANTIC_TANGENT,
+		SEMANTIC_BINORMAL,
+		SEMANTIC_TEXCOORD0,
+		SEMANTIC_TEXCOORD1,
+		SEMANTIC_TEXCOORD2,
+		SEMANTIC_TEXCOORD3,
 	};
 
-	enum VertexInputType
+	enum DataType
 	{
-		COMPONENT_FLOAT,
+		TYPE_FLOAT,
+		TYPE_INT8,
+		TYPE_UINT8,
+		TYPE_INT16,
+		TYPE_UINT16,
+		TYPE_INT32,
+		TYPE_UINT32,
 	};
 
 	constexpr size_t MaxVertexInputElement = 16;
 	constexpr size_t MaxVertexBufferBindingSlot = 8;
+	constexpr size_t MaxConstantBufferBindingSlot = 16;
 	constexpr size_t MaxRenderTargetBindingSlot = 8;
 
 	constexpr size_t MaxVertexLayoutCount = 1024;
 	constexpr size_t MaxVertexBufferCount = 1024;
 	constexpr size_t MaxIndexBufferCount = 1024;
+	constexpr size_t MaxConstantBufferCount = 1024;
 	constexpr size_t MaxRenderTargetCount = 32;
 	constexpr size_t MaxTextureCount = 1024;
 	constexpr size_t MaxVertexShaderCount = 1024;
@@ -106,12 +115,13 @@ namespace bamboo
 			struct
 			{
 				uint32_t			VertexBufferCount : 8;
+				uint32_t			ConstantBufferCount : 8;
 				uint32_t			RenderTargetCount : 8;
 				uint32_t			HasIndexBuffer : 1;
 				uint32_t			HasVertexShader : 1;
 				uint32_t			HasPixelShader : 1;
 				uint32_t			HasDepthStencil : 1;
-				uint32_t			_Reserved : 12;
+				uint32_t			_Reserved : 4;
 			};
 			uint32_t				InfoBits;
 		};
@@ -120,6 +130,12 @@ namespace bamboo
 		IndexBufferHandle			IndexBuffer;
 
 		VertexLayoutHandle			VertexLayout;
+
+		struct
+		{
+			ConstantBufferHandle	Handle;
+			uint16_t				BindingFlag;  // TBD: ? bit 0 : Vertex Shader, bit 1 : Pixel Shader
+		}							ConstantBuffers[MaxConstantBufferBindingSlot];
 
 		VertexShaderHandle			VertexShader;
 		PixelShaderHandle			PixelShader;
@@ -143,11 +159,15 @@ namespace bamboo
 		// Buffers
 		virtual VertexBufferHandle CreateVertexBuffer(size_t size, bool dynamic) = 0;
 		virtual void DestroyVertexBuffer(VertexBufferHandle handle) = 0;
-		virtual void UpdateVertexBuffer(VertexBufferHandle handle, size_t size, size_t stride, const void* data) = 0;
+		virtual void UpdateVertexBuffer(VertexBufferHandle handle, size_t size, const void* data, size_t stride) = 0;
 
 		virtual IndexBufferHandle CreateIndexBuffer(size_t size, bool dynamic) = 0;
 		virtual void DestroyIndexBuffer(IndexBufferHandle handle) = 0;
-		virtual void UpdateIndexBuffer(IndexBufferHandle handle, size_t size, const void* data) = 0;
+		virtual void UpdateIndexBuffer(IndexBufferHandle handle, size_t size, const void* data, DataType type) = 0;
+
+		virtual ConstantBufferHandle CreateConstantBuffer(size_t size) = 0;
+		virtual void DestroyConstantBuffer(ConstantBufferHandle handle) = 0;
+		virtual void UpdateConstantBuffer(ConstantBufferHandle handle, size_t size, const void* data) = 0;
 
 		// Render targets
 		virtual RenderTargetHandle CreateRenderTarget(PixelFormat format, uint32_t width, uint32_t height, bool isDepth, bool hasStencil) = 0;
@@ -181,6 +201,7 @@ namespace bamboo
 		HandleAlloc<MaxVertexLayoutCount>		vlHandleAlloc;
 		HandleAlloc<MaxVertexBufferCount>		vbHandleAlloc;
 		HandleAlloc<MaxIndexBufferCount>		ibHandleAlloc;
+		HandleAlloc<MaxConstantBufferCount>		cbHandleAlloc;
 		HandleAlloc<MaxRenderTargetCount>		rtHandleAlloc;
 		HandleAlloc<MaxTextureCount>			texHandleAlloc;
 		HandleAlloc<MaxVertexShaderCount>		vsHandleAlloc;

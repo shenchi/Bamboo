@@ -60,7 +60,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	};
 
 	auto vb = api->CreateVertexBuffer(sizeof(vertices), false);
-	api->UpdateVertexBuffer(vb, sizeof(vertices), sizeof(float) * 3, reinterpret_cast<void*>(vertices));
+	api->UpdateVertexBuffer(vb, sizeof(vertices), reinterpret_cast<void*>(vertices), sizeof(float) * 3);
 
 	auto vs_byte = LoadFile("vs_simple.cso");
 	auto ps_byte = LoadFile("ps_simple.cso");
@@ -72,7 +72,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	layout.ElementCount = 1;
 	layout.Elements[0] =
 	{
-		bamboo::POSITION, 3 - 1 /* 0~3 stands for 1~4 */, bamboo::COMPONENT_FLOAT, 0, 0
+		bamboo::SEMANTIC_POSITION, 3 - 1 /* 0~3 stands for 1~4 */, bamboo::TYPE_FLOAT, 0, 0
 	};
 
 	auto vl = api->CreateVertexLayout(layout);
@@ -92,7 +92,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 	state.Viewport = { 0, 0, 800, 600, 0.0f, 1.0f };
 
-	state.PrimitiveType = bamboo::TRIANGLES;
+	state.PrimitiveType = bamboo::PRIMITIVE_TRIANGLES;
 
 	float clearColor[] = { 0.7f, 0.7f, 0.7f, 1.0f };
 	auto invalidRTHandle = bamboo::RenderTargetHandle{ bamboo::invalid_handle }; // TODO

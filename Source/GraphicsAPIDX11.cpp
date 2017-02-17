@@ -10,30 +10,89 @@ namespace bamboo
 	namespace dx11
 	{
 
+		DXGI_FORMAT InputSlotTypeTable[][4] =
+		{
+			// TYPE_FLOAT
+			{ DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R32G32_FLOAT, DXGI_FORMAT_R32G32B32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT },
+			// TYPE_INT8
+			{ DXGI_FORMAT_R8_SINT, DXGI_FORMAT_R8G8_SINT, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_R8G8B8A8_SINT },
+			// TYPE_UINT8
+			{ DXGI_FORMAT_R8_UINT, DXGI_FORMAT_R8G8_UINT, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_R8G8B8A8_UINT },
+			// TYPE_INT16
+			{ DXGI_FORMAT_R16_SINT, DXGI_FORMAT_R16G16_SINT, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_R16G16B16A16_SINT },
+			// TYPE_UINT16
+			{ DXGI_FORMAT_R16_UINT, DXGI_FORMAT_R16G16_UINT, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_R16G16B16A16_UINT },
+			// TYPE_INT32
+			{ DXGI_FORMAT_R32_SINT, DXGI_FORMAT_R32G32_SINT, DXGI_FORMAT_R32G32B32_SINT, DXGI_FORMAT_R32G32B32A32_SINT },
+			// TYPE_UINT32
+			{ DXGI_FORMAT_R32_UINT, DXGI_FORMAT_R32G32_UINT, DXGI_FORMAT_R32G32B32_UINT, DXGI_FORMAT_R32G32B32A32_UINT },
+		};
+
+		size_t InputSlotSizeTable[] =
+		{
+			4, // TYPE_FLOAT
+			1, // TYPE_INT8
+			1, // TYPE_UINT8
+			2, // TYPE_INT16
+			2, // TYPE_UINT16
+			4, // TYPE_INT32
+			4, // TYPE_UINT32
+		};
+
+		DXGI_FORMAT IndexTypeTable[] = 
+		{
+			DXGI_FORMAT_UNKNOWN, // TYPE_FLOAT
+			DXGI_FORMAT_UNKNOWN, // TYPE_INT8
+			DXGI_FORMAT_UNKNOWN, // TYPE_UINT8
+			DXGI_FORMAT_UNKNOWN, // TYPE_INT16
+			DXGI_FORMAT_R16_UINT, // TYPE_UINT16
+			DXGI_FORMAT_UNKNOWN, // TYPE_INT32
+			DXGI_FORMAT_R32_UINT, // TYPE_UINT32
+		};
+
+		LPSTR InputSemanticsTable[] =
+		{
+			"POSITION",
+			"COLOR",
+			"NORMAL",
+			"TANGENT",
+			"BINORMAL",
+			"TEXCOORD0",
+			"TEXCOORD1",
+			"TEXCOORD2",
+			"TEXCOORD3",
+		};
+
+		D3D11_PRIMITIVE_TOPOLOGY PrimitiveTypeTable[] =
+		{
+			D3D11_PRIMITIVE_TOPOLOGY_POINTLIST,
+			D3D11_PRIMITIVE_TOPOLOGY_LINELIST,
+			D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+		};
+
+
 		struct VertexLayoutDX11
 		{
 			D3D11_INPUT_ELEMENT_DESC	elements[MaxVertexInputElement];
 			uint16_t					elementCount;
 		};
 
-		struct GeometryBufferDX11
+		struct BufferDX11
 		{
 			ID3D11Buffer*	buffer;
 			UINT			size;
-			UINT			stride;
 			UINT			bindFlags;
 			bool			dynamic;
 
-			inline void Reset(UINT size, UINT bindFlags, bool dynamic)
+			void Reset(UINT size, UINT bindFlags, bool dynamic)
 			{
 				Release();
 				this->size = size;
-				this->stride = stride;
 				this->bindFlags = bindFlags;
 				this->dynamic = dynamic;
 			}
 
-			inline void Release()
+			void Release()
 			{
 				if (nullptr != buffer)
 				{
@@ -44,7 +103,8 @@ namespace bamboo
 				}
 			}
 
-			inline void Update(ID3D11Device1* device, ID3D11DeviceContext1* context, UINT size, UINT stride, const void* data)
+
+			void Update(ID3D11Device1* device, ID3D11DeviceContext1* context, UINT size, const void* data)
 			{
 				if (nullptr == buffer)
 				{
@@ -61,9 +121,6 @@ namespace bamboo
 						// error
 						return;
 					}
-
-					if (stride > 0)
-						this->stride = stride;
 				}
 				else if (dynamic)
 				{
@@ -71,12 +128,19 @@ namespace bamboo
 					context->Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &res);
 					memcpy(res.pData, data, min(size, this->size));
 					context->Unmap(buffer, 0);
-
-					if (stride > 0)
-						this->stride = stride;
 				}
 				// else error
 			}
+		};
+
+		struct GeometryBufferDX11 : public BufferDX11
+		{
+			UINT			stride;
+		};
+
+		struct IndexBufferDX11 : public BufferDX11
+		{
+			DXGI_FORMAT		type;
 		};
 
 		struct RenderTargetDX11
@@ -183,36 +247,6 @@ namespace bamboo
 			}
 		};
 
-		DXGI_FORMAT InputSlotTypeTable[][4] =
-		{
-			// COMPONENT_FLOAT
-			{ DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R32G32_FLOAT, DXGI_FORMAT_R32G32B32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT}
-		};
-
-		size_t InputSlotSizeTable[] =
-		{
-			4 // COMPONENT_FLOAT
-		};
-
-		LPSTR InputSemanticsTable[] =
-		{
-			"POSITION",
-			"COLOR",
-			"NORMAL",
-			"TANGENT",
-			"BINORMAL",
-			"TEXCOORD0",
-			"TEXCOORD1",
-			"TEXCOORD2",
-			"TEXCOORD3",
-		};
-
-		D3D11_PRIMITIVE_TOPOLOGY PrimitiveTypeTable[] =
-		{
-			D3D11_PRIMITIVE_TOPOLOGY_POINTLIST,
-			D3D11_PRIMITIVE_TOPOLOGY_LINELIST,
-			D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
-		};
 
 		struct GraphicsAPIDX11 : public GraphicsAPI
 		{
@@ -228,8 +262,9 @@ namespace bamboo
 			VertexLayoutDX11			vertexLayouts[MaxVertexLayoutCount];
 
 			GeometryBufferDX11			vertexBuffers[MaxVertexBufferCount];
-			GeometryBufferDX11			indexBuffers[MaxIndexBufferCount];
+			IndexBufferDX11				indexBuffers[MaxIndexBufferCount];
 
+			BufferDX11					constantBuffers[MaxConstantBufferCount];
 			RenderTargetDX11			renderTargets[MaxRenderTargetCount];
 
 			TextureDX11					textures[MaxTextureCount];
@@ -357,7 +392,7 @@ namespace bamboo
 
 					RenderTargetDX11& rt = renderTargets[defaultColorBuffer.id];
 
-					rt.Reset(PixelFormat::AUTO_PIXEL_FORMAT, width, height, false, false);
+					rt.Reset(PixelFormat::FORMAT_AUTO, width, height, false, false);
 
 					ID3D11Texture2D* backbufferTex = nullptr;
 					if (S_OK != (hr = swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backbufferTex)))
@@ -378,7 +413,7 @@ namespace bamboo
 
 					RenderTargetDX11& ds = renderTargets[defaultDepthStencilBuffer.id];
 
-					ds.Reset(PixelFormat::D24_UNORM_S8_UINT, width, height, true, true);
+					ds.Reset(PixelFormat::FORMAT_D24_UNORM_S8_UINT, width, height, true, true);
 					ID3D11Texture2D* depthStencilTex = nullptr;
 					D3D11_TEXTURE2D_DESC depthDesc{ 0 };
 					depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
@@ -407,6 +442,7 @@ namespace bamboo
 
 			void InitPipelineStates()
 			{
+				// TODO
 				{
 					D3D11_VIEWPORT viewport{
 						0.0f, 0.0f,
@@ -452,9 +488,7 @@ namespace bamboo
 					if (!ibHandleAlloc.InUse(handle))
 						return;
 #endif
-
-					// TODO
-					context->IASetIndexBuffer(indexBuffers[handle].buffer, DXGI_FORMAT_R32_UINT, 0);
+					context->IASetIndexBuffer(indexBuffers[handle].buffer, indexBuffers[handle].type, 0);
 				}
 
 				// Vertex Shader & Input Layout
@@ -633,11 +667,12 @@ namespace bamboo
 				vbHandleAlloc.Free(handle.id);
 			}
 
-			void UpdateVertexBuffer(VertexBufferHandle handle, size_t size, size_t stride, const void* data) override
+			void UpdateVertexBuffer(VertexBufferHandle handle, size_t size, const void* data, size_t stride) override
 			{
 				if (!vbHandleAlloc.InUse(handle.id)) return;
 				GeometryBufferDX11& vb = vertexBuffers[handle.id];
-				vb.Update(device, context, static_cast<UINT>(size), static_cast<UINT>(stride), data);
+				vb.Update(device, context, static_cast<UINT>(size), data);
+				vb.stride = static_cast<UINT>(stride);
 			}
 
 			IndexBufferHandle GraphicsAPIDX11::CreateIndexBuffer(size_t size, bool dynamic) override
@@ -646,7 +681,7 @@ namespace bamboo
 
 				if (handle != invalid_handle)
 				{
-					GeometryBufferDX11& ib = indexBuffers[handle];
+					IndexBufferDX11& ib = indexBuffers[handle];
 					ib.Reset(static_cast<UINT>(size), D3D11_BIND_INDEX_BUFFER, dynamic);
 				}
 
@@ -656,16 +691,45 @@ namespace bamboo
 			void DestroyIndexBuffer(IndexBufferHandle handle) override
 			{
 				if (!ibHandleAlloc.InUse(handle.id)) return;
-				GeometryBufferDX11& ib = indexBuffers[handle.id];
+				IndexBufferDX11& ib = indexBuffers[handle.id];
 				ib.Release();
 				ibHandleAlloc.Free(handle.id);
 			}
 
-			void UpdateIndexBuffer(IndexBufferHandle handle, size_t size, const void* data) override
+			void UpdateIndexBuffer(IndexBufferHandle handle, size_t size, const void* data, DataType type) override
 			{
-				if (!ibHandleAlloc.InUse(handle.id)) return;
-				GeometryBufferDX11& ib = indexBuffers[handle.id];
-				ib.Update(device, context, static_cast<UINT>(size), 0, data);
+				if (!ibHandleAlloc.InUse(handle.id) || (type != TYPE_UINT16 && type != TYPE_UINT32)) return;
+				IndexBufferDX11& ib = indexBuffers[handle.id];
+				ib.Update(device, context, static_cast<UINT>(size), data);
+				ib.type = IndexTypeTable[type];
+			}
+
+			ConstantBufferHandle CreateConstantBuffer(size_t size) override
+			{
+				uint16_t handle = cbHandleAlloc.Alloc();
+
+				if (handle != invalid_handle)
+				{
+					BufferDX11& cb = constantBuffers[handle];
+					cb.Reset(static_cast<UINT>(size), D3D11_BIND_CONSTANT_BUFFER, true);
+				}
+
+				return ConstantBufferHandle{ handle };
+			}
+
+			void DestroyConstantBuffer(ConstantBufferHandle handle) override
+			{
+				if (!cbHandleAlloc.InUse(handle.id)) return;
+				BufferDX11& cb = constantBuffers[handle.id];
+				cb.Release();
+				cbHandleAlloc.Free(handle.id);
+			}
+
+			void UpdateConstantBuffer(ConstantBufferHandle handle, size_t size, const void* data) override
+			{
+				if (!cbHandleAlloc.InUse(handle.id)) return;
+				BufferDX11& cb = constantBuffers[handle.id];
+				cb.Update(device, context, static_cast<UINT>(size), data);
 			}
 
 			RenderTargetHandle CreateRenderTarget(PixelFormat format, uint32_t width, uint32_t height, bool isDepth, bool hasStencil) override
@@ -739,7 +803,7 @@ namespace bamboo
 			void ClearDepth(RenderTargetHandle handle, float depth) override
 			{
 				if (!rtHandleAlloc.InUse(handle.id)) 
-					handle = defaultColorBuffer; // TODO
+					handle = defaultColorBuffer; // TODO another way to create swap chain buffer
 				RenderTargetDX11& rt = renderTargets[handle.id];
 				if (!rt.isDepth) return;
 				context->ClearDepthStencilView(rt.depthStencilView, D3D11_CLEAR_DEPTH, depth, 0);
@@ -748,7 +812,7 @@ namespace bamboo
 			void ClearDepthStencil(RenderTargetHandle handle, float depth, uint8_t stencil) override
 			{
 				if (!rtHandleAlloc.InUse(handle.id))
-					handle = defaultDepthStencilBuffer; // TODO
+					handle = defaultDepthStencilBuffer; // TODO another way to create swap chain buffer
 				RenderTargetDX11& rt = renderTargets[handle.id];
 				if (!rt.isDepth || !rt.hasStencil) return;
 				context->ClearDepthStencilView(rt.depthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, depth, stencil);
@@ -770,7 +834,7 @@ namespace bamboo
 
 				VertexShaderDX11& vs = vertexShaders[handle];
 				vs.shader = shader;
-				vs.byteCode = reinterpret_cast<void*>(new uint8_t[size]); // TODO
+				vs.byteCode = reinterpret_cast<void*>(new uint8_t[size]); // TODO another way to keep this
 				memcpy(vs.byteCode, bytecode, size);
 				vs.length = size;
 
@@ -842,6 +906,7 @@ namespace bamboo
 
 				CLEAR_ARRAY(vertexBuffers, MaxVertexBufferCount, vbHandleAlloc);
 				CLEAR_ARRAY(indexBuffers, MaxIndexBufferCount, ibHandleAlloc);
+				CLEAR_ARRAY(constantBuffers, MaxConstantBufferCount, cbHandleAlloc);
 				CLEAR_ARRAY(renderTargets, MaxRenderTargetCount, rtHandleAlloc);
 				CLEAR_ARRAY(textures, MaxTextureCount, texHandleAlloc);
 				CLEAR_ARRAY(vertexShaders, MaxVertexShaderCount, vsHandleAlloc);
