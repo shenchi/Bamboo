@@ -34,8 +34,9 @@ namespace bamboo
 		FORMAT_AUTO,
 		FORMAT_R8G8B8A8_UNORM,
 		FORMAT_R8G8B8A8_SNORM,
-		FORMAT_R16_INT,
-		FORMAT_R32_INT,
+		FORMAT_R32G32B32A32_FLOAT,
+		FORMAT_R16_SINT,
+		FORMAT_R32_SINT,
 		FORMAT_R16_UINT,
 		FORMAT_R32_UINT,
 		FORMAT_D24_UNORM_S8_UINT,
@@ -154,6 +155,7 @@ namespace bamboo
 		RenderTargetHandle			RenderTargets[MaxRenderTargetBindingSlot];
 		RenderTargetHandle			DepthStencil;
 
+		// TODO textures & samplers
 
 		Viewport					Viewport;
 
@@ -189,8 +191,9 @@ namespace bamboo
 		virtual void ClearDepthStencil(RenderTargetHandle handle, float depth, uint8_t stencil) = 0;
 
 		// Textures
-		virtual TextureHandle CreateTexture() = 0; // TODO
+		virtual TextureHandle CreateTexture(PixelFormat format, uint32_t width, uint32_t height, bool dynamic) = 0;
 		virtual void DestroyTexture(TextureHandle handle) = 0;
+		virtual void UpdateTexture(TextureHandle handle, size_t pitch, const void* data) = 0;
 
 		// Samplers
 		virtual SamplerHandle CreateSampler() = 0; // TODO

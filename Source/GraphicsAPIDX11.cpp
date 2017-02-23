@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 #include <d3d11_1.h>
+
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 
@@ -70,6 +71,18 @@ namespace bamboo
 			D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
 		};
 
+		DXGI_FORMAT TextureFormatTable[] =
+		{
+			DXGI_FORMAT_R32G32B32A32_FLOAT, // AUTO
+			DXGI_FORMAT_R8G8B8A8_UNORM,
+			DXGI_FORMAT_R8G8B8A8_SNORM,
+			DXGI_FORMAT_R32G32B32A32_FLOAT,
+			DXGI_FORMAT_R16_SINT,
+			DXGI_FORMAT_R32_SINT,
+			DXGI_FORMAT_R16_UINT,
+			DXGI_FORMAT_R32_UINT,
+			DXGI_FORMAT_D24_UNORM_S8_UINT,
+		};
 
 		struct VertexLayoutDX11
 		{
@@ -192,17 +205,77 @@ namespace bamboo
 		struct TextureDX11
 		{
 			ID3D11Texture2D*			texture;
+			ID3D11ShaderResourceView*	srv;
 
 			PixelFormat					format;
 			uint32_t					width;
 			uint32_t					height;
+			bool						dynamic;
 
-			void Reset(PixelFormat format, uint32_t width, uint32_t height)
+			void Reset(PixelFormat format, uint32_t width, uint32_t height, bool dynamic)
 			{
 				Release();
 				this->format = format;
 				this->width = width;
 				this->height = height;
+				this->dynamic = dynamic;
+			}
+
+			void Update(ID3D11Device1* device, ID3D11DeviceContext1* context, UINT pitch, const void* data)
+			{
+				if (nullptr == texture)
+				{
+					D3D11_TEXTURE2D_DESC desc = {};
+					desc.Width = width;
+					desc.Height = height;
+					desc.MipLevels = 1; // TODO
+					desc.ArraySize = 1; // TODO
+					desc.Format = TextureFormatTable[format];
+					desc.SampleDesc.Count = 1;
+					desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+					desc.Usage = dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT;
+					if (dynamic) desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+
+					D3D11_SUBRESOURCE_DATA data_desc = {};
+					data_desc.pSysMem = data;
+					data_desc.SysMemPitch = pitch;
+
+					if (FAILED(device->CreateTexture2D(&desc, &data_desc, &(texture))))
+					{
+						// error
+						return;
+					}
+
+					if (FAILED(device->CreateShaderResourceView(texture, nullptr, &srv)))
+					{
+						// error;
+						texture->Release();
+						texture = nullptr;
+						return;
+					}
+				}
+				else if (dynamic)
+				{
+					D3D11_MAPPED_SUBRESOURCE res = {};
+					context->Map(texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &res);
+					const uint8_t* pSrc = reinterpret_cast<const uint8_t*>(data);
+					uint8_t* pDst = reinterpret_cast<uint8_t*>(res.pData);
+
+					for (uint32_t i = 0; i < height; ++i)
+					{
+						memcpy(pDst, pSrc, pitch * height);
+
+						pSrc += pitch * height;
+						pDst += res.RowPitch;
+					}
+
+					context->Unmap(texture, 0);
+				}
+				else
+				{
+					context->UpdateSubresource(texture, 0, nullptr, data, pitch, 0);
+				}
+				// else error
 			}
 
 			void Release()
@@ -211,6 +284,8 @@ namespace bamboo
 				{
 					texture->Release();
 					texture = nullptr;
+					srv->Release();
+					srv = nullptr;
 				}
 			}
 		};
@@ -221,8 +296,18 @@ namespace bamboo
 
 			void Reset(ID3D11Device* device)
 			{
+				// TODO
 				D3D11_SAMPLER_DESC desc = {};
-				device->CreateSamplerState(&desc, &sampler);
+				desc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+				desc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+				desc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+				desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+				desc.MaxLOD = D3D11_FLOAT32_MAX;
+
+				if (FAILED(device->CreateSamplerState(&desc, &sampler)))
+				{
+					// error
+				}
 			}
 
 			void Release()
@@ -873,24 +958,53 @@ namespace bamboo
 				context->ClearDepthStencilView(rt.depthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, depth, stencil);
 			}
 
-			TextureHandle CreateTexture() override
+			TextureHandle CreateTexture(PixelFormat format, uint32_t width, uint32_t height, bool dynamic) override
 			{
-				return TextureHandle{ invalid_handle };
+				uint16_t handle = texHandleAlloc.Alloc();
+
+				if (handle != invalid_handle)
+				{
+					TextureDX11& tex = textures[handle];
+					tex.Reset(format, width, height, dynamic);
+				}
+
+				return TextureHandle{ handle };
 			}
 
 			void DestroyTexture(TextureHandle handle) override
 			{
+				if (!texHandleAlloc.InUse(handle.id)) return;
+				TextureDX11& tex = textures[handle.id];
+				tex.Release();
+				texHandleAlloc.Free(handle.id);
+			}
 
+			void UpdateTexture(TextureHandle handle, size_t pitch, const void* data) override
+			{
+				if (!texHandleAlloc.InUse(handle.id)) return;
+				TextureDX11& tex = textures[handle.id];
+				tex.Update(device, context, static_cast<UINT>(pitch), data);
 			}
 
 			SamplerHandle CreateSampler() override
 			{
-				return SamplerHandle{ invalid_handle };
+				uint16_t handle = sampHandleAlloc.Alloc();
+
+				if (handle != invalid_handle)
+				{
+					SamplerDX11& s = samplers[handle];
+					s.Reset(device);
+				}
+
+				return SamplerHandle{ handle };
 			}
 
 			void DestroySampler(SamplerHandle handle) override
 			{
-
+				if (!sampHandleAlloc.InUse(handle.id)) return;
+				SamplerDX11& s = samplers[handle.id];
+				s.Release();
+				sampHandleAlloc.Free(handle.id);
 			}
 
 			VertexShaderHandle CreateVertexShader(const void* bytecode, size_t size) override
