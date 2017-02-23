@@ -39,7 +39,7 @@ namespace bamboo
 			4, // TYPE_UINT32
 		};
 
-		DXGI_FORMAT IndexTypeTable[] = 
+		DXGI_FORMAT IndexTypeTable[] =
 		{
 			DXGI_FORMAT_UNKNOWN, // TYPE_FLOAT
 			DXGI_FORMAT_UNKNOWN, // TYPE_INT8
@@ -112,6 +112,7 @@ namespace bamboo
 					desc.BindFlags = bindFlags;
 					desc.ByteWidth = size;
 					desc.Usage = dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_IMMUTABLE;
+					if (dynamic) desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 
 					D3D11_SUBRESOURCE_DATA data_desc = {};
 					data_desc.pSysMem = data;
@@ -214,6 +215,26 @@ namespace bamboo
 			}
 		};
 
+		struct SamplerDX11
+		{
+			ID3D11SamplerState*			sampler;
+
+			void Reset(ID3D11Device* device)
+			{
+				D3D11_SAMPLER_DESC desc = {};
+				device->CreateSamplerState(&desc, &sampler);
+			}
+
+			void Release()
+			{
+				if (nullptr != sampler)
+				{
+					sampler->Release();
+					sampler = nullptr;
+				}
+			}
+		};
+
 		struct VertexShaderDX11
 		{
 			ID3D11VertexShader*		shader;
@@ -250,8 +271,8 @@ namespace bamboo
 
 		struct GraphicsAPIDX11 : public GraphicsAPI
 		{
-			int width;
-			int height;
+			int							width;
+			int							height;
 
 			HWND						hWnd;
 
@@ -268,6 +289,8 @@ namespace bamboo
 			RenderTargetDX11			renderTargets[MaxRenderTargetCount];
 
 			TextureDX11					textures[MaxTextureCount];
+
+			SamplerDX11					samplers[MaxSamplerCount];
 
 			VertexShaderDX11			vertexShaders[MaxVertexShaderCount];
 			PixelShaderDX11				pixelShaders[MaxPixelShaderCount];
@@ -553,6 +576,38 @@ namespace bamboo
 					context->PSSetShader(ps.shader, nullptr, 0);
 				}
 
+				// Constant Buffers
+				{
+					ID3D11Buffer* vsCBs[MaxConstantBufferBindingSlot];
+					ID3D11Buffer* psCBs[MaxConstantBufferBindingSlot];
+					UINT vsCBCount = 0, psCBCount = 0;
+
+					for (uint32_t i = 0; i < state.ConstantBufferCount; ++i)
+					{
+						uint16_t handle = state.ConstantBuffers[i].Handle.id;
+#if _DEBUG
+						if (!cbHandleAlloc.InUse(handle))
+							return;
+#endif
+						ID3D11Buffer* cb = constantBuffers[handle].buffer;
+
+						if (state.ConstantBuffers[i].BindingVertexShader)
+						{
+							vsCBs[vsCBCount] = cb;
+							vsCBCount++;
+						}
+
+						if (state.ConstantBuffers[i].BindingPixelShader)
+						{
+							psCBs[psCBCount] = cb;
+							psCBCount++;
+						}
+					}
+
+					context->VSSetConstantBuffers(0, vsCBCount, vsCBs);
+					context->PSSetConstantBuffers(0, psCBCount, psCBs);
+				}
+
 				// Render Target
 				if (state.RenderTargetCount > 0 || state.HasDepthStencil)
 				{
@@ -802,7 +857,7 @@ namespace bamboo
 
 			void ClearDepth(RenderTargetHandle handle, float depth) override
 			{
-				if (!rtHandleAlloc.InUse(handle.id)) 
+				if (!rtHandleAlloc.InUse(handle.id))
 					handle = defaultColorBuffer; // TODO another way to create swap chain buffer
 				RenderTargetDX11& rt = renderTargets[handle.id];
 				if (!rt.isDepth) return;
@@ -816,6 +871,26 @@ namespace bamboo
 				RenderTargetDX11& rt = renderTargets[handle.id];
 				if (!rt.isDepth || !rt.hasStencil) return;
 				context->ClearDepthStencilView(rt.depthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, depth, stencil);
+			}
+
+			TextureHandle CreateTexture() override
+			{
+				return TextureHandle{ invalid_handle };
+			}
+
+			void DestroyTexture(TextureHandle handle) override
+			{
+
+			}
+
+			SamplerHandle CreateSampler() override
+			{
+				return SamplerHandle{ invalid_handle };
+			}
+
+			void DestroySampler(SamplerHandle handle) override
+			{
+
 			}
 
 			VertexShaderHandle CreateVertexShader(const void* bytecode, size_t size) override
@@ -904,16 +979,18 @@ namespace bamboo
 				for (uint16_t handle = 0; handle < count; ++handle) \
 					if (alloc.InUse(handle)) arr[handle].Release();
 
+				// vertex layout is not d3d resource here
 				CLEAR_ARRAY(vertexBuffers, MaxVertexBufferCount, vbHandleAlloc);
 				CLEAR_ARRAY(indexBuffers, MaxIndexBufferCount, ibHandleAlloc);
 				CLEAR_ARRAY(constantBuffers, MaxConstantBufferCount, cbHandleAlloc);
 				CLEAR_ARRAY(renderTargets, MaxRenderTargetCount, rtHandleAlloc);
 				CLEAR_ARRAY(textures, MaxTextureCount, texHandleAlloc);
+				CLEAR_ARRAY(samplers, MaxSamplerCount, sampHandleAlloc);
 				CLEAR_ARRAY(vertexShaders, MaxVertexShaderCount, vsHandleAlloc);
 				CLEAR_ARRAY(pixelShaders, MaxPixelShaderCount, psHandleAlloc);
 
 #undef CLEAR_ARRAY
-				
+
 				swapChain->Release();
 				context->Release();
 				device->Release();

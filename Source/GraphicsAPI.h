@@ -15,6 +15,7 @@ namespace bamboo
 	HANDLE_DECLARE(ConstantBuffer);
 	HANDLE_DECLARE(RenderTarget);
 	HANDLE_DECLARE(Texture);
+	HANDLE_DECLARE(Sampler);
 	HANDLE_DECLARE(VertexShader);
 	HANDLE_DECLARE(PixelShader);
 
@@ -76,6 +77,7 @@ namespace bamboo
 	constexpr size_t MaxConstantBufferCount = 1024;
 	constexpr size_t MaxRenderTargetCount = 32;
 	constexpr size_t MaxTextureCount = 1024;
+	constexpr size_t MaxSamplerCount = 1024;
 	constexpr size_t MaxVertexShaderCount = 1024;
 	constexpr size_t MaxPixelShaderCount = 1024;
 
@@ -134,7 +136,16 @@ namespace bamboo
 		struct
 		{
 			ConstantBufferHandle	Handle;
-			uint16_t				BindingFlag;  // TBD: ? bit 0 : Vertex Shader, bit 1 : Pixel Shader
+			union
+			{
+				struct
+				{
+					uint16_t			BindingVertexShader : 1;
+					uint16_t			BindingPixelShader : 1;
+					uint16_t			_Reserved : 14;
+				};
+				uint16_t				BindingFlag;
+			};
 		}							ConstantBuffers[MaxConstantBufferBindingSlot];
 
 		VertexShaderHandle			VertexShader;
@@ -178,6 +189,12 @@ namespace bamboo
 		virtual void ClearDepthStencil(RenderTargetHandle handle, float depth, uint8_t stencil) = 0;
 
 		// Textures
+		virtual TextureHandle CreateTexture() = 0; // TODO
+		virtual void DestroyTexture(TextureHandle handle) = 0;
+
+		// Samplers
+		virtual SamplerHandle CreateSampler() = 0; // TODO
+		virtual void DestroySampler(SamplerHandle handle) = 0;
 
 		// Shaders
 		virtual VertexShaderHandle CreateVertexShader(const void* bytecode, size_t size) = 0;
@@ -204,6 +221,7 @@ namespace bamboo
 		HandleAlloc<MaxConstantBufferCount>		cbHandleAlloc;
 		HandleAlloc<MaxRenderTargetCount>		rtHandleAlloc;
 		HandleAlloc<MaxTextureCount>			texHandleAlloc;
+		HandleAlloc<MaxSamplerCount>			sampHandleAlloc;
 		HandleAlloc<MaxVertexShaderCount>		vsHandleAlloc;
 		HandleAlloc<MaxPixelShaderCount>		psHandleAlloc;
 	};

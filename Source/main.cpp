@@ -77,6 +77,10 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 	auto vl = api->CreateVertexLayout(layout);
 
+	float color[] = { 1.0f, 0.0f, 0.0f, 1.0f };
+	auto cb = api->CreateConstantBuffer(sizeof(float) * 4);
+	api->UpdateConstantBuffer(cb, sizeof(float) * 4, color);
+
 	bamboo::PipelineState state = {};
 
 	state.VertexBufferCount = 1;
@@ -89,6 +93,9 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	state.PixelShader = ps;
 
 	state.VertexLayout = vl;
+
+	state.ConstantBufferCount = 1;
+	state.ConstantBuffers[0] = { cb, { 0, 1, 0} };
 
 	state.Viewport = { 0, 0, 800, 600, 0.0f, 1.0f };
 
