@@ -71,6 +71,8 @@ namespace bamboo
 	constexpr size_t MaxVertexBufferBindingSlot = 8;
 	constexpr size_t MaxConstantBufferBindingSlot = 16;
 	constexpr size_t MaxRenderTargetBindingSlot = 8;
+	constexpr size_t MaxTextureBindingSlot = 16; // 128;
+	constexpr size_t MaxSamplerBindingSlot = 16;
 
 	constexpr size_t MaxVertexLayoutCount = 1024;
 	constexpr size_t MaxVertexBufferCount = 1024;
@@ -118,8 +120,10 @@ namespace bamboo
 			struct
 			{
 				uint32_t			VertexBufferCount : 8;
-				uint32_t			ConstantBufferCount : 8;
-				uint32_t			RenderTargetCount : 8;
+				uint32_t			ConstantBufferCount : 4;
+				uint32_t			RenderTargetCount : 4;
+				uint32_t			TextureCount : 4;
+				uint32_t			SamplerCount : 4;
 				uint32_t			HasIndexBuffer : 1;
 				uint32_t			HasVertexShader : 1;
 				uint32_t			HasPixelShader : 1;
@@ -155,7 +159,35 @@ namespace bamboo
 		RenderTargetHandle			RenderTargets[MaxRenderTargetBindingSlot];
 		RenderTargetHandle			DepthStencil;
 
-		// TODO textures & samplers
+		struct
+		{
+			TextureHandle			Handle;
+			union
+			{
+				struct
+				{
+					uint16_t			BindingVertexShader : 1;
+					uint16_t			BindingPixelShader : 1;
+					uint16_t			_Reserved : 14;
+				};
+				uint16_t				BindingFlag;
+			};
+		}							Textures[MaxTextureBindingSlot];
+
+		struct
+		{
+			SamplerHandle			Handle;
+			union
+			{
+				struct
+				{
+					uint16_t			BindingVertexShader : 1;
+					uint16_t			BindingPixelShader : 1;
+					uint16_t			_Reserved : 14;
+				};
+				uint16_t				BindingFlag;
+			};
+		}							Samplers[MaxSamplerBindingSlot];
 
 		Viewport					Viewport;
 

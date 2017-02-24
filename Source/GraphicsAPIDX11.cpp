@@ -58,10 +58,23 @@ namespace bamboo
 			"NORMAL",
 			"TANGENT",
 			"BINORMAL",
-			"TEXCOORD0",
-			"TEXCOORD1",
-			"TEXCOORD2",
-			"TEXCOORD3",
+			"TEXCOORD",
+			"TEXCOORD",
+			"TEXCOORD",
+			"TEXCOORD",
+		};
+
+		UINT InputSemanticsIndex[] =
+		{
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			1,
+			2,
+			3,
 		};
 
 		D3D11_PRIMITIVE_TOPOLOGY PrimitiveTypeTable[] =
@@ -301,7 +314,7 @@ namespace bamboo
 				desc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
 				desc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
 				desc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
-				desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+				desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;// D3D11_FILTER_MIN_MAG_MIP_LINEAR;
 				desc.MaxLOD = D3D11_FLOAT32_MAX;
 
 				if (FAILED(device->CreateSamplerState(&desc, &sampler)))
@@ -693,6 +706,70 @@ namespace bamboo
 					context->PSSetConstantBuffers(0, psCBCount, psCBs);
 				}
 
+				// Textures
+				{
+					ID3D11ShaderResourceView* vsSRVs[MaxTextureBindingSlot];
+					ID3D11ShaderResourceView* psSRVs[MaxTextureBindingSlot];
+					UINT vsSRVCount = 0, psSRVCount = 0;
+
+					for (uint32_t i = 0; i < state.TextureCount; ++i)
+					{
+						uint16_t handle = state.Textures[i].Handle.id;
+#if _DEBUG
+						if (!texHandleAlloc.InUse(handle))
+							return;
+#endif
+						ID3D11ShaderResourceView* srv = textures[handle].srv;
+
+						if (state.Textures[i].BindingVertexShader)
+						{
+							vsSRVs[vsSRVCount] = srv;
+							vsSRVCount++;
+						}
+
+						if (state.Textures[i].BindingPixelShader)
+						{
+							psSRVs[psSRVCount] = srv;
+							psSRVCount++;
+						}
+					}
+
+					context->VSSetShaderResources(0, vsSRVCount, vsSRVs);
+					context->PSSetShaderResources(0, psSRVCount, psSRVs);
+				}
+
+				// Samplers
+				{
+					ID3D11SamplerState* vsSamps[MaxSamplerBindingSlot];
+					ID3D11SamplerState* psSamps[MaxSamplerBindingSlot];
+					UINT vsSampCount = 0, psSampCount = 0;
+
+					for (uint32_t i = 0; i < state.SamplerCount; ++i)
+					{
+						uint16_t handle = state.Samplers[i].Handle.id;
+#if _DEBUG
+						if (!sampHandleAlloc.InUse(handle))
+							return;
+#endif
+						ID3D11SamplerState* samp = samplers[handle].sampler;
+
+						if (state.Textures[i].BindingVertexShader)
+						{
+							vsSamps[vsSampCount] = samp;
+							vsSampCount++;
+						}
+
+						if (state.Textures[i].BindingPixelShader)
+						{
+							psSamps[psSampCount] = samp;
+							psSampCount++;
+						}
+					}
+
+					context->VSSetSamplers(0, vsSampCount, vsSamps);
+					context->PSSetSamplers(0, psSampCount, psSamps);
+				}
+
 				// Render Target
 				if (state.RenderTargetCount > 0 || state.HasDepthStencil)
 				{
@@ -770,7 +847,7 @@ namespace bamboo
 					desc.InputSlot = elem.BindingSlot;
 					desc.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
 					desc.InstanceDataStepRate = 0;
-					desc.SemanticIndex = 0;
+					desc.SemanticIndex = InputSemanticsIndex[elem.SemanticId];
 					desc.SemanticName = InputSemanticsTable[elem.SemanticId];
 
 					offset += static_cast<UINT>(size);

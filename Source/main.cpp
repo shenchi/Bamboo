@@ -54,13 +54,19 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 	float vertices[] =
 	{
-		0.0f, 0.5f, 0.0f,
-		0.5f, -0.25f, 0.0f,
-		-0.5f, -0.25f, 0.0f,
+		-0.5f, 0.5f, 0.0f, 0.0f, 0.0f,
+		0.5f, 0.5f, 0.0f, 10.0f, 0.0f,
+		0.5f, -0.5f, 0.0f, 10.0f, 10.0f,
+		-0.5f, -0.5f, 0.0f, 0.0f, 10.0f,
 	};
 
+	uint32_t indices[] = { 0, 1, 2, 0, 2, 3 };
+
 	auto vb = api->CreateVertexBuffer(sizeof(vertices), false);
-	api->UpdateVertexBuffer(vb, sizeof(vertices), reinterpret_cast<void*>(vertices), sizeof(float) * 3);
+	api->UpdateVertexBuffer(vb, sizeof(vertices), reinterpret_cast<void*>(vertices), sizeof(float) * 5);
+
+	auto ib = api->CreateIndexBuffer(sizeof(indices), false);
+	api->UpdateIndexBuffer(ib, sizeof(indices), reinterpret_cast<void*>(indices), bamboo::TYPE_UINT32);
 
 	auto vs_byte = LoadFile("vs_simple.cso");
 	auto ps_byte = LoadFile("ps_simple.cso");
@@ -69,10 +75,14 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	auto ps = api->CreatePixelShader(ps_byte.ptr, ps_byte.size);
 
 	bamboo::VertexLayout layout = {};
-	layout.ElementCount = 1;
+	layout.ElementCount = 2;
 	layout.Elements[0] =
 	{
 		bamboo::SEMANTIC_POSITION, 3 - 1 /* 0~3 stands for 1~4 */, bamboo::TYPE_FLOAT, 0, 0
+	};
+	layout.Elements[1] =
+	{
+		bamboo::SEMANTIC_TEXCOORD0, 2 - 1 /* 0~3 stands for 1~4 */, bamboo::TYPE_FLOAT, 0, 0
 	};
 
 	auto vl = api->CreateVertexLayout(layout);
@@ -81,13 +91,29 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	auto cb = api->CreateConstantBuffer(sizeof(float) * 4);
 	api->UpdateConstantBuffer(cb, sizeof(float) * 4, color);
 
+
+	/*float tex_data[] = {
+		1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f,
+		0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+	};*/
+	uint8_t tex_data[] = {
+		255, 255, 255, 255, 0, 0, 0, 255,
+		0, 0, 0, 255, 255, 255, 255, 255,
+	};
+	auto tex = api->CreateTexture(bamboo::FORMAT_R8G8B8A8_UNORM, 2, 2, false);
+	api->UpdateTexture(tex, sizeof(uint8_t) * 8, reinterpret_cast<void*>(tex_data));
+
+	auto sampler = api->CreateSampler();
+
 	bamboo::PipelineState state = {};
 
 	state.VertexBufferCount = 1;
+	state.HasIndexBuffer = 1;
 	state.HasVertexShader = 1;
 	state.HasPixelShader = 1;
 
 	state.VertexBuffers[0] = vb;
+	state.IndexBuffer = ib;
 
 	state.VertexShader = vs;
 	state.PixelShader = ps;
@@ -96,6 +122,12 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 	state.ConstantBufferCount = 1;
 	state.ConstantBuffers[0] = { cb, { 0, 1, 0} };
+
+	state.TextureCount = 1;
+	state.Textures[0] = { tex, {0, 1, 0} };
+
+	state.SamplerCount = 1;
+	state.Samplers[0] = { sampler, {0, 1, 0} };
 
 	state.Viewport = { 0, 0, 800, 600, 0.0f, 1.0f };
 
@@ -108,7 +140,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	{
 		api->Clear(invalidRTHandle, clearColor);
 		api->ClearDepthStencil(invalidRTHandle, 1.0f, 0);
-		api->Draw(state, 3);
+		api->DrawIndex(state, 6);
 		api->Present();
 	}
 
