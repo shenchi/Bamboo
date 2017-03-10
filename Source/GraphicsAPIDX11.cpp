@@ -1011,7 +1011,8 @@ namespace bamboo
 
 			void Clear(RenderTargetHandle handle, float color[4]) override
 			{
-				if (!rtHandleAlloc.InUse(handle.id)) return;
+				if (!rtHandleAlloc.InUse(handle.id))
+					handle = defaultColorBuffer; // TODO another way to create swap chain buffer
 				RenderTargetDX11& rt = renderTargets[handle.id];
 				if (rt.isDepth) return;
 				context->ClearRenderTargetView(rt.renderTargetView, color);
@@ -1020,7 +1021,7 @@ namespace bamboo
 			void ClearDepth(RenderTargetHandle handle, float depth) override
 			{
 				if (!rtHandleAlloc.InUse(handle.id))
-					handle = defaultColorBuffer; // TODO another way to create swap chain buffer
+					handle = defaultDepthStencilBuffer; // TODO another way to create swap chain buffer
 				RenderTargetDX11& rt = renderTargets[handle.id];
 				if (!rt.isDepth) return;
 				context->ClearDepthStencilView(rt.depthStencilView, D3D11_CLEAR_DEPTH, depth, 0);

@@ -87,7 +87,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 	auto vl = api->CreateVertexLayout(layout);
 
-	float color[] = { 1.0f, 0.0f, 0.0f, 1.0f };
+	float color[] = { 0.0f, 1.0f, 1.0f, 1.0f };
 	auto cb = api->CreateConstantBuffer(sizeof(float) * 4);
 	api->UpdateConstantBuffer(cb, sizeof(float) * 4, color);
 
