@@ -91,11 +91,6 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	auto cb = api->CreateConstantBuffer(sizeof(float) * 4);
 	api->UpdateConstantBuffer(cb, sizeof(float) * 4, color);
 
-
-	/*float tex_data[] = {
-		1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f,
-		0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f,
-	};*/
 	uint8_t tex_data[] = {
 		255, 255, 255, 255, 0, 0, 0, 255,
 		0, 0, 0, 255, 255, 255, 255, 255,
