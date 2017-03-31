@@ -159,8 +159,6 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		bamboo::SEMANTIC_TEXCOORD0, 2 - 1 /* 0~3 stands for 1~4 */, bamboo::TYPE_FLOAT, 0, 0
 	};
 
-	auto vl = api->CreateVertexLayout(layout);
-
 	Memory frameConstants(sizeof(XMFLOAT4X4) * 2);
 	Memory instanceConstants(sizeof(XMFLOAT4X4) * 2);
 
@@ -201,49 +199,53 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 	bamboo::PipelineState state = {};
 
-	state.VertexBufferCount = 1;
-	state.HasIndexBuffer = 1;
-	state.HasVertexShader = 1;
-	state.HasPixelShader = 1;
-
-	state.VertexBuffers[0] = vb;
-	state.IndexBuffer = ib;
-
+	state.VertexLayout = layout;
 	state.VertexShader = vs;
 	state.PixelShader = ps;
 
-	state.VertexLayout = vl;
-
 	state.CullMode = bamboo::CULL_BACK;
-
-	state.ConstantBufferCount = 3;
-	state.ConstantBuffers[0] = { cb1, { 1, 0, 0} };
-	state.ConstantBuffers[1] = { cb2, { 1, 0, 0 } };
-	state.ConstantBuffers[2] = { cb3, { 0, 1, 0 } };
-
-	state.TextureCount = 3;
-	state.Textures[0] = { cubeMap, { 0, 1, 0 } };
-	state.Textures[1] = { diffuseTex, {0, 1, 0} };
-	state.Textures[2] = { normalMap, { 0, 1, 0 } };
-
-	state.SamplerCount = 1;
-	state.Samplers[0] = { sampler, {0, 1, 0} };
-
-	state.Viewport = { 0, 0, 800, 600, 0.0f, 1.0f };
-
 	state.DepthEnable = 1;
 	state.DepthWrite = 1;
 	state.DepthFunc = bamboo::COMPARISON_LESS;
-
 	state.PrimitiveType = bamboo::PRIMITIVE_TRIANGLES;
+
+	bamboo::DrawCall drawcall1 = {};
+	drawcall1.VertexBufferCount = 1;
+	drawcall1.HasIndexBuffer = 1;
+
+	drawcall1.VertexBuffers[0] = vb;
+	drawcall1.IndexBuffer = ib;
+
+	drawcall1.ConstantBufferCount = 3;
+	drawcall1.ConstantBuffers[0] = { cb1, { 1, 0, 0} };
+	drawcall1.ConstantBuffers[1] = { cb2, { 1, 0, 0 } };
+	drawcall1.ConstantBuffers[2] = { cb3, { 0, 1, 0 } };
+
+	drawcall1.TextureCount = 3;
+	drawcall1.Textures[0] = { cubeMap, { 0, 1, 0 } };
+	drawcall1.Textures[1] = { diffuseTex, {0, 1, 0} };
+	drawcall1.Textures[2] = { normalMap, { 0, 1, 0 } };
+
+	drawcall1.SamplerCount = 1;
+	drawcall1.Samplers[0] = { sampler, {0, 1, 0} };
+
+	drawcall1.Viewport = { 0, 0, 800, 600, 0.0f, 1.0f };
+
+	drawcall1.ElementCount = static_cast<uint32_t>(assimp.GetIndicesCount());
 
 	bamboo::PipelineState stateSkyBox = state;
 	stateSkyBox.VertexShader = vs_skybox;
 	stateSkyBox.PixelShader = ps_skybox;
 	stateSkyBox.CullMode = bamboo::CULL_FRONT;
-	stateSkyBox.ConstantBufferCount = 1;
-	stateSkyBox.TextureCount = 1;
 	stateSkyBox.DepthFunc = bamboo::COMPARISON_LESS_EQUAL;
+
+	bamboo::DrawCall drawcall2 = drawcall1;
+	drawcall2.ConstantBufferCount = 1;
+	drawcall2.TextureCount = 1;
+
+	auto pso1 = api->CreatePipelineState(state);
+	auto pso2 = api->CreatePipelineState(stateSkyBox);
+
 
 	float clearColor[] = { 0.0f, 0.0f, 0.0f, 1.0f };
 	auto invalidRTHandle = bamboo::RenderTargetHandle{ bamboo::invalid_handle }; // TODO
@@ -329,10 +331,10 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		api->Clear(invalidRTHandle, clearColor);
 		api->ClearDepthStencil(invalidRTHandle, 1.0f, 0);
 
-		api->DrawIndex(state, static_cast<uint32_t>(assimp.GetIndicesCount()));
+		api->Draw(pso1, drawcall1);
 
 		// skybox
-		api->DrawIndex(stateSkyBox, static_cast<uint32_t>(assimp.GetIndicesCount()));
+		api->Draw(pso2, drawcall2);
 
 		api->Present();
 	}

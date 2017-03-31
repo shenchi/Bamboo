@@ -9,7 +9,7 @@ namespace bamboo
 
 	constexpr uint16_t invalid_handle = UINT16_MAX;
 
-	HANDLE_DECLARE(VertexLayout);
+	HANDLE_DECLARE(PipelineState);
 	HANDLE_DECLARE(VertexBuffer);
 	HANDLE_DECLARE(IndexBuffer);
 	HANDLE_DECLARE(ConstantBuffer);
@@ -95,7 +95,7 @@ namespace bamboo
 	constexpr size_t MaxTextureBindingSlot = 16; // 128;
 	constexpr size_t MaxSamplerBindingSlot = 16;
 
-	constexpr size_t MaxVertexLayoutCount = 1024;
+	constexpr size_t MaxPipelineStateCount = 1024;
 	constexpr size_t MaxVertexBufferCount = 1024;
 	constexpr size_t MaxIndexBufferCount = 1024;
 	constexpr size_t MaxConstantBufferCount = 1024;
@@ -136,23 +136,7 @@ namespace bamboo
 #pragma pack(push, 1)
 	struct PipelineState
 	{
-		union
-		{
-			struct
-			{
-				uint32_t			VertexBufferCount : 8;
-				uint32_t			ConstantBufferCount : 4;
-				uint32_t			RenderTargetCount : 4;
-				uint32_t			TextureCount : 4;
-				uint32_t			SamplerCount : 4;
-				uint32_t			HasIndexBuffer : 1;
-				uint32_t			HasVertexShader : 1;
-				uint32_t			HasPixelShader : 1;
-				uint32_t			HasDepthStencil : 1;
-				uint32_t			_Reserved : 4;
-			};
-			uint32_t				InfoBits;
-		};
+		VertexLayout				VertexLayout;
 
 		union
 		{
@@ -176,10 +160,36 @@ namespace bamboo
 			uint32_t				DepthStencilState;
 		};
 
+		VertexShaderHandle			VertexShader;
+		PixelShaderHandle			PixelShader;
+
+		PrimitiveType				PrimitiveType;
+	};
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+	struct DrawCall
+	{
+		uint32_t					ElementCount;
+
+		union
+		{
+			struct
+			{
+				uint32_t			VertexBufferCount : 8;
+				uint32_t			ConstantBufferCount : 4;
+				uint32_t			RenderTargetCount : 4;
+				uint32_t			TextureCount : 4;
+				uint32_t			SamplerCount : 4;
+				uint32_t			HasIndexBuffer : 1;
+				uint32_t			HasDepthStencil : 1;
+				uint32_t			_Reserved : 6;
+			};
+			uint32_t				InfoBits;
+		};
+
 		VertexBufferHandle			VertexBuffers[MaxVertexBufferBindingSlot];
 		IndexBufferHandle			IndexBuffer;
-
-		VertexLayoutHandle			VertexLayout;
 
 		struct
 		{
@@ -195,9 +205,6 @@ namespace bamboo
 				uint16_t				BindingFlag;
 			};
 		}							ConstantBuffers[MaxConstantBufferBindingSlot];
-
-		VertexShaderHandle			VertexShader;
-		PixelShaderHandle			PixelShader;
 
 		RenderTargetHandle			RenderTargets[MaxRenderTargetBindingSlot];
 		RenderTargetHandle			DepthStencil;
@@ -233,16 +240,14 @@ namespace bamboo
 		}							Samplers[MaxSamplerBindingSlot];
 
 		Viewport					Viewport;
-
-		PrimitiveType				PrimitiveType;
 	};
 #pragma pack(pop)
 
 	struct GraphicsAPI
 	{
-		// Vertex Layout
-		virtual VertexLayoutHandle CreateVertexLayout(VertexLayout layout) = 0;
-		virtual void DestroyVertexLayout(VertexLayoutHandle handle) = 0;
+		// Pipeline States
+		virtual PipelineStateHandle CreatePipelineState(const PipelineState& state) = 0;
+		virtual void DestroyPipelineState(PipelineStateHandle handle) = 0;
 
 		// Buffers
 		virtual VertexBufferHandle CreateVertexBuffer(size_t size, bool dynamic) = 0;
@@ -283,8 +288,7 @@ namespace bamboo
 		virtual void DestroyPixelShader(PixelShaderHandle handle) = 0;
 
 		// Draw Functions
-		virtual void Draw(const PipelineState& state, uint32_t vertexCount) = 0;
-		virtual void DrawIndex(const PipelineState& state, uint32_t indexCount) = 0;
+		virtual void Draw(PipelineStateHandle stateHandle, const DrawCall& drawcall) = 0;
 
 		// Swap Chains
 		// TODO, bind swap chains with render targets
@@ -293,8 +297,7 @@ namespace bamboo
 		// Clean up
 		virtual void Shutdown() = 0;
 
-		PipelineState							internalState;
-		HandleAlloc<MaxVertexLayoutCount>		vlHandleAlloc;
+		HandleAlloc<MaxPipelineStateCount>		psoHandleAlloc;
 		HandleAlloc<MaxVertexBufferCount>		vbHandleAlloc;
 		HandleAlloc<MaxIndexBufferCount>		ibHandleAlloc;
 		HandleAlloc<MaxConstantBufferCount>		cbHandleAlloc;

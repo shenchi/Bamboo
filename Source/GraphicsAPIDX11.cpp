@@ -102,12 +102,6 @@ namespace bamboo
 			DXGI_FORMAT_D24_UNORM_S8_UINT,
 		};
 
-		struct VertexLayoutDX11
-		{
-			D3D11_INPUT_ELEMENT_DESC	elements[MaxVertexInputElement];
-			uint16_t					elementCount;
-		};
-
 		struct BufferDX11
 		{
 			ID3D11Buffer*	buffer;
@@ -370,6 +364,106 @@ namespace bamboo
 			}
 		};
 
+		struct PipelineStateDX11
+		{
+			ID3D11InputLayout*			layout;
+			ID3D11RasterizerState*		rsState;
+			ID3D11DepthStencilState*	dsState;
+
+			VertexShaderHandle			vs;
+			PixelShaderHandle			ps;
+
+			D3D11_PRIMITIVE_TOPOLOGY	topology;
+
+			bool Reset(ID3D11Device* device, const PipelineState& state, VertexShaderDX11* _vs)
+			{
+				Release();
+
+				if (nullptr != _vs)
+				{
+					D3D11_INPUT_ELEMENT_DESC elements[MaxVertexInputElement];
+					uint16_t elementCount = state.VertexLayout.ElementCount;
+
+					UINT offset = 0;
+					UINT lastSlot = 0;
+
+					for (size_t i = 0; i < elementCount; ++i)
+					{
+						const VertexInputElement& elem = state.VertexLayout.Elements[i];
+						D3D11_INPUT_ELEMENT_DESC& desc = elements[i];
+
+						size_t size = InputSlotSizeTable[elem.ComponentType] * (elem.ComponentCount + 1);
+
+						if (elem.BindingSlot != lastSlot)
+							offset = 0;
+
+						desc.AlignedByteOffset = offset;
+						desc.Format = InputSlotTypeTable[elem.ComponentType][elem.ComponentCount];
+						desc.InputSlot = elem.BindingSlot;
+						desc.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
+						desc.InstanceDataStepRate = 0;
+						desc.SemanticIndex = InputSemanticsIndex[elem.SemanticId];
+						desc.SemanticName = InputSemanticsTable[elem.SemanticId];
+
+						offset += static_cast<UINT>(size);
+						lastSlot = elem.BindingSlot;
+					}
+
+					if (FAILED(device->CreateInputLayout(elements, elementCount, _vs->byteCode, _vs->length, &layout)))
+					{
+						return false;
+					}
+				}
+
+				{
+					D3D11_RASTERIZER_DESC rsDesc = {};
+					rsDesc.FillMode = D3D11_FILL_SOLID;
+					rsDesc.CullMode = static_cast<D3D11_CULL_MODE>(state.CullMode + 1);
+					rsDesc.DepthClipEnable = TRUE;
+					if (FAILED(device->CreateRasterizerState(&rsDesc, &rsState)))
+					{
+						return false;
+					}
+
+					D3D11_DEPTH_STENCIL_DESC dsDesc = {};
+					dsDesc.DepthEnable = state.DepthEnable;
+					dsDesc.DepthWriteMask = static_cast<D3D11_DEPTH_WRITE_MASK>(state.DepthWrite);
+					dsDesc.DepthFunc = static_cast<D3D11_COMPARISON_FUNC>(state.DepthFunc + 1);
+					if (FAILED(device->CreateDepthStencilState(&dsDesc, &dsState)))
+					{
+						return false;
+					}
+				}
+
+				vs = state.VertexShader;
+				ps = state.PixelShader;
+				topology = PrimitiveTypeTable[state.PrimitiveType];
+
+				return true;
+			}
+
+			void Release()
+			{
+				if (nullptr != layout)
+				{
+					layout->Release();
+					layout = nullptr;
+				}
+
+				if (nullptr != rsState)
+				{
+					rsState->Release();
+					rsState = nullptr;
+				}
+
+				if (nullptr != dsState)
+				{
+					dsState->Release();
+					dsState = nullptr;
+				}
+			}
+		};
+
 
 		struct GraphicsAPIDX11 : public GraphicsAPI
 		{
@@ -382,7 +476,7 @@ namespace bamboo
 			ID3D11Device1*				device;
 			ID3D11DeviceContext1*		context;
 
-			VertexLayoutDX11			vertexLayouts[MaxVertexLayoutCount];
+			PipelineStateDX11			pipelineStates[MaxPipelineStateCount];
 
 			GeometryBufferDX11			vertexBuffers[MaxVertexBufferCount];
 			IndexBufferDX11				indexBuffers[MaxIndexBufferCount];
@@ -399,6 +493,8 @@ namespace bamboo
 
 			RenderTargetHandle			defaultColorBuffer;
 			RenderTargetHandle			defaultDepthStencilBuffer;
+
+			PipelineStateHandle			internalState;
 
 			int Init(void* windowHandle)
 			{
@@ -577,22 +673,57 @@ namespace bamboo
 
 					context->RSSetViewports(1, &viewport);
 				}
+
+				internalState.id = invalid_handle;
 			}
 
-			void SetPipelineStates(const PipelineState& state)
+			void SetPipelineState(const PipelineStateDX11& state)
+			{
+
+				// Vertex Shader & Input Layout
+				{
+					uint16_t handle = state.vs.id;
+#if _DEBUG
+					if (!vsHandleAlloc.InUse(handle))
+						return;
+#endif
+					VertexShaderDX11& vs = vertexShaders[handle];
+					context->VSSetShader(vs.shader, nullptr, 0);
+				}
+
+				// Pixel Shader
+				{
+					uint16_t handle = state.ps.id;
+#if _DEBUG
+					if (!psHandleAlloc.InUse(handle))
+						return;
+#endif
+					PixelShaderDX11& ps = pixelShaders[handle];
+					context->PSSetShader(ps.shader, nullptr, 0);
+				}
+
+				context->IASetPrimitiveTopology(state.topology);
+
+				context->IASetInputLayout(state.layout);
+
+				context->RSSetState(state.rsState);
+				context->OMSetDepthStencilState(state.dsState, 0 /* TODO !!!!! */);
+
+				// TODO internalState = state;
+			}
+
+			void BindResources(const DrawCall& drawcall)
 			{
 				// Input Assembly
-				context->IASetPrimitiveTopology(PrimitiveTypeTable[state.PrimitiveType]);
-
-				if (state.VertexBufferCount > 0)
+				if (drawcall.VertexBufferCount > 0)
 				{
 					ID3D11Buffer*	vb[MaxVertexBufferBindingSlot];
 					UINT			strides[MaxVertexBufferBindingSlot];
 					UINT			offsets[MaxVertexBufferBindingSlot];
 
-					for (size_t i = 0; i < state.VertexBufferCount; ++i)
+					for (size_t i = 0; i < drawcall.VertexBufferCount; ++i)
 					{
-						uint16_t handle = state.VertexBuffers[i].id;
+						uint16_t handle = drawcall.VertexBuffers[i].id;
 #if _DEBUG
 						if (!vbHandleAlloc.InUse(handle))
 							return;
@@ -603,103 +734,33 @@ namespace bamboo
 						offsets[i] = 0;
 					}
 
-					context->IASetVertexBuffers(0, state.VertexBufferCount, vb, strides, offsets);
+					context->IASetVertexBuffers(0, drawcall.VertexBufferCount, vb, strides, offsets);
 				}
 
-				if (state.HasIndexBuffer)
+				if (drawcall.HasIndexBuffer)
 				{
-					uint16_t handle = state.IndexBuffer.id;
+					uint16_t handle = drawcall.IndexBuffer.id;
 #if _DEBUG
 					if (!ibHandleAlloc.InUse(handle))
 						return;
 #endif
 					context->IASetIndexBuffer(indexBuffers[handle].buffer, indexBuffers[handle].type, 0);
 				}
-
-				// Vertex Shader & Input Layout
-				{
-					uint16_t handle = state.VertexShader.id;
-#if _DEBUG
-					if (!vsHandleAlloc.InUse(handle))
-						return;
-#endif
-					VertexShaderDX11& vs = vertexShaders[handle];
-					context->VSSetShader(vs.shader, nullptr, 0);
-
-					{
-						uint16_t handle = state.VertexLayout.id;
-#if _DEBUG
-						if (!vlHandleAlloc.InUse(handle))
-							return;
-#endif
-
-						ID3D11InputLayout* layout = nullptr;
-
-						if (FAILED(device->CreateInputLayout(
-							vertexLayouts[handle].elements,
-							vertexLayouts[handle].elementCount,
-							vs.byteCode,
-							vs.length,
-							&layout
-						)))
-						{
-							return;
-						}
-
-						context->IASetInputLayout(layout);
-
-						layout->Release();
-					}
-				}
+				/////
 
 				// Rasterizer
 				{
-					ID3D11RasterizerState* rs = nullptr;
-					D3D11_RASTERIZER_DESC rsDesc = {};
-					rsDesc.FillMode = D3D11_FILL_SOLID;
-					rsDesc.CullMode = static_cast<D3D11_CULL_MODE>(state.CullMode + 1);
-					rsDesc.DepthClipEnable = TRUE;
-					if (FAILED(device->CreateRasterizerState(&rsDesc, &rs)))
-					{
-						return; // TODO
-					}
-					context->RSSetState(rs);
-					rs->Release();
-
-					ID3D11DepthStencilState* ds = nullptr;
-					D3D11_DEPTH_STENCIL_DESC dsDesc = {};
-					dsDesc.DepthEnable = state.DepthEnable;
-					dsDesc.DepthWriteMask = static_cast<D3D11_DEPTH_WRITE_MASK>(state.DepthWrite);
-					dsDesc.DepthFunc = static_cast<D3D11_COMPARISON_FUNC>(state.DepthFunc + 1);
-					if (FAILED(device->CreateDepthStencilState(&dsDesc, &ds)))
-					{
-						return; // TODO
-					}
-					context->OMSetDepthStencilState(ds, 0); // TODO
-					ds->Release();
-
 					D3D11_VIEWPORT vp =
 					{
-						state.Viewport.X,
-						state.Viewport.Y,
-						state.Viewport.Width,
-						state.Viewport.Height,
-						state.Viewport.ZMin,
-						state.Viewport.ZMax
+						drawcall.Viewport.X,
+						drawcall.Viewport.Y,
+						drawcall.Viewport.Width,
+						drawcall.Viewport.Height,
+						drawcall.Viewport.ZMin,
+						drawcall.Viewport.ZMax
 					};
 
 					context->RSSetViewports(1, &vp);
-				}
-
-				// Pixel Shader
-				{
-					uint16_t handle = state.PixelShader.id;
-#if _DEBUG
-					if (!psHandleAlloc.InUse(handle))
-						return;
-#endif
-					PixelShaderDX11& ps = pixelShaders[handle];
-					context->PSSetShader(ps.shader, nullptr, 0);
 				}
 
 				// Constant Buffers
@@ -708,22 +769,22 @@ namespace bamboo
 					ID3D11Buffer* psCBs[MaxConstantBufferBindingSlot];
 					UINT vsCBCount = 0, psCBCount = 0;
 
-					for (uint32_t i = 0; i < state.ConstantBufferCount; ++i)
+					for (uint32_t i = 0; i < drawcall.ConstantBufferCount; ++i)
 					{
-						uint16_t handle = state.ConstantBuffers[i].Handle.id;
+						uint16_t handle = drawcall.ConstantBuffers[i].Handle.id;
 #if _DEBUG
 						if (!cbHandleAlloc.InUse(handle))
 							return;
 #endif
 						ID3D11Buffer* cb = constantBuffers[handle].buffer;
 
-						if (state.ConstantBuffers[i].BindingVertexShader)
+						if (drawcall.ConstantBuffers[i].BindingVertexShader)
 						{
 							vsCBs[vsCBCount] = cb;
 							vsCBCount++;
 						}
 
-						if (state.ConstantBuffers[i].BindingPixelShader)
+						if (drawcall.ConstantBuffers[i].BindingPixelShader)
 						{
 							psCBs[psCBCount] = cb;
 							psCBCount++;
@@ -740,22 +801,22 @@ namespace bamboo
 					ID3D11ShaderResourceView* psSRVs[MaxTextureBindingSlot];
 					UINT vsSRVCount = 0, psSRVCount = 0;
 
-					for (uint32_t i = 0; i < state.TextureCount; ++i)
+					for (uint32_t i = 0; i < drawcall.TextureCount; ++i)
 					{
-						uint16_t handle = state.Textures[i].Handle.id;
+						uint16_t handle = drawcall.Textures[i].Handle.id;
 #if _DEBUG
 						if (!texHandleAlloc.InUse(handle))
 							return;
 #endif
 						ID3D11ShaderResourceView* srv = textures[handle].srv;
 
-						if (state.Textures[i].BindingVertexShader)
+						if (drawcall.Textures[i].BindingVertexShader)
 						{
 							vsSRVs[vsSRVCount] = srv;
 							vsSRVCount++;
 						}
 
-						if (state.Textures[i].BindingPixelShader)
+						if (drawcall.Textures[i].BindingPixelShader)
 						{
 							psSRVs[psSRVCount] = srv;
 							psSRVCount++;
@@ -772,22 +833,22 @@ namespace bamboo
 					ID3D11SamplerState* psSamps[MaxSamplerBindingSlot];
 					UINT vsSampCount = 0, psSampCount = 0;
 
-					for (uint32_t i = 0; i < state.SamplerCount; ++i)
+					for (uint32_t i = 0; i < drawcall.SamplerCount; ++i)
 					{
-						uint16_t handle = state.Samplers[i].Handle.id;
+						uint16_t handle = drawcall.Samplers[i].Handle.id;
 #if _DEBUG
 						if (!sampHandleAlloc.InUse(handle))
 							return;
 #endif
 						ID3D11SamplerState* samp = samplers[handle].sampler;
 
-						if (state.Textures[i].BindingVertexShader)
+						if (drawcall.Textures[i].BindingVertexShader)
 						{
 							vsSamps[vsSampCount] = samp;
 							vsSampCount++;
 						}
 
-						if (state.Textures[i].BindingPixelShader)
+						if (drawcall.Textures[i].BindingPixelShader)
 						{
 							psSamps[psSampCount] = samp;
 							psSampCount++;
@@ -799,14 +860,14 @@ namespace bamboo
 				}
 
 				// Render Target
-				if (state.RenderTargetCount > 0 || state.HasDepthStencil)
+				if (drawcall.RenderTargetCount > 0 || drawcall.HasDepthStencil)
 				{
 					ID3D11RenderTargetView* rtvs[MaxRenderTargetBindingSlot];
 					ID3D11DepthStencilView* dsv = nullptr;
 
-					for (size_t i = 0; i < state.RenderTargetCount; ++i)
+					for (size_t i = 0; i < drawcall.RenderTargetCount; ++i)
 					{
-						uint16_t handle = state.RenderTargets[i].id;
+						uint16_t handle = drawcall.RenderTargets[i].id;
 #if _DEBUG
 						if (!rtHandleAlloc.InUse(handle))
 							return;
@@ -818,9 +879,9 @@ namespace bamboo
 						rtvs[i] = rt.renderTargetView;
 					}
 
-					if (state.HasDepthStencil)
+					if (drawcall.HasDepthStencil)
 					{
-						uint16_t handle = state.DepthStencil.id;
+						uint16_t handle = drawcall.DepthStencil.id;
 #if _DEBUG
 						if (!rtHandleAlloc.InUse(handle))
 							return;
@@ -832,7 +893,7 @@ namespace bamboo
 						dsv = rt.depthStencilView;
 					}
 
-					context->OMSetRenderTargets(state.RenderTargetCount, rtvs, dsv);
+					context->OMSetRenderTargets(drawcall.RenderTargetCount, rtvs, dsv);
 				}
 				else
 				{
@@ -840,55 +901,45 @@ namespace bamboo
 					ID3D11DepthStencilView* dsv = renderTargets[defaultDepthStencilBuffer.id].depthStencilView;
 					context->OMSetRenderTargets(1, &rtv, dsv);
 				}
-
-				internalState = state;
+				//
 			}
 
 			// interface implementation
 #pragma region interface implementation
 
-			VertexLayoutHandle CreateVertexLayout(VertexLayout layout) override
+			PipelineStateHandle CreatePipelineState(const PipelineState& state) override
 			{
-				uint16_t handle = vlHandleAlloc.Alloc();
+				uint16_t handle = psoHandleAlloc.Alloc();
 
-				if (invalid_handle == handle) return VertexLayoutHandle{ invalid_handle };
+				if (invalid_handle == handle) return PipelineStateHandle{ invalid_handle };
 
-				VertexLayoutDX11& vl = vertexLayouts[handle];
+				PipelineStateDX11& pso = pipelineStates[handle];
 
-				vl.elementCount = layout.ElementCount;
+				VertexShaderDX11* vs = nullptr;
 
-				UINT offset = 0;
-				UINT lastSlot = 0;
-
-				for (size_t i = 0; i < layout.ElementCount; ++i)
 				{
-					VertexInputElement& elem = layout.Elements[i];
-					D3D11_INPUT_ELEMENT_DESC& desc = vl.elements[i];
-
-					size_t size = InputSlotSizeTable[elem.ComponentType] * (elem.ComponentCount + 1);
-
-					if (elem.BindingSlot != lastSlot)
-						offset = 0;
-
-					desc.AlignedByteOffset = offset;
-					desc.Format = InputSlotTypeTable[elem.ComponentType][elem.ComponentCount];
-					desc.InputSlot = elem.BindingSlot;
-					desc.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
-					desc.InstanceDataStepRate = 0;
-					desc.SemanticIndex = InputSemanticsIndex[elem.SemanticId];
-					desc.SemanticName = InputSemanticsTable[elem.SemanticId];
-
-					offset += static_cast<UINT>(size);
-					lastSlot = elem.BindingSlot;
+					uint16_t handle = state.VertexShader.id;
+					if (vsHandleAlloc.InUse(handle))
+					{
+						vs = &vertexShaders[handle];
+					}
 				}
 
-				return VertexLayoutHandle{ handle };
+				if (!pso.Reset(device, state, vs))
+				{
+					pso.Release();
+					return PipelineStateHandle{ invalid_handle };
+				}
+
+				return PipelineStateHandle{ handle };
 			}
 
-			void DestroyVertexLayout(VertexLayoutHandle handle) override
+			void DestroyPipelineState(PipelineStateHandle handle) override
 			{
-				if (vlHandleAlloc.InUse(handle.id))
-					vlHandleAlloc.Free(handle.id);
+				if (!psoHandleAlloc.InUse(handle.id)) return;
+				PipelineStateDX11& pso = pipelineStates[handle.id];
+				pso.Release();
+				psoHandleAlloc.Free(handle.id);
 			}
 
 			VertexBufferHandle GraphicsAPIDX11::CreateVertexBuffer(size_t size, bool dynamic) override
@@ -1092,7 +1143,7 @@ namespace bamboo
 					ID3D11ShaderResourceView* srv;
 
 					size_t fnLen = wcslen(filename);
-					if (filename[fnLen - 4] == L'.' && 
+					if (filename[fnLen - 4] == L'.' &&
 						filename[fnLen - 3] == L'd' &&
 						filename[fnLen - 2] == L'd' &&
 						filename[fnLen - 1] == L's')
@@ -1122,7 +1173,7 @@ namespace bamboo
 
 					D3D11_TEXTURE2D_DESC desc = {};
 					tex2d->GetDesc(&desc);
-					
+
 					for (unsigned i = PixelFormat::FORMAT_AUTO; i < PixelFormat::NUM_PIXEL_FORMAT; ++i)
 					{
 						if (TextureFormatTable[i] == desc.Format)
@@ -1140,10 +1191,10 @@ namespace bamboo
 						texHandleAlloc.Free(handle);
 						return TextureHandle{ invalid_handle };
 					}
-					
+
 					width = static_cast<uint32_t>(desc.Width);
 					height = static_cast<uint32_t>(desc.Height);
-					
+
 					tex.Reset(format, width, height, false);
 					tex.texture = tex2d;
 					tex.srv = srv;
@@ -1251,16 +1302,30 @@ namespace bamboo
 				psHandleAlloc.Free(handle.id);
 			}
 
-			void Draw(const PipelineState& state, uint32_t vertexCount) override
+			void Draw(PipelineStateHandle stateHandle, const DrawCall& drawcall) override
 			{
-				SetPipelineStates(state);
-				context->Draw(vertexCount, 0);
-			}
+				if (stateHandle.id != internalState.id)
+				{
+					if (!psoHandleAlloc.InUse(stateHandle.id))
+					{
+						return; // TODO error !
+					}
 
-			void DrawIndex(const PipelineState& state, uint32_t indexCount) override
-			{
-				SetPipelineStates(state);
-				context->DrawIndexed(indexCount, 0, 0);
+					PipelineStateDX11& state = pipelineStates[stateHandle.id];
+					SetPipelineState(state);
+
+					internalState = stateHandle;
+				}
+
+				BindResources(drawcall);
+				if (drawcall.HasIndexBuffer)
+				{
+					context->DrawIndexed(drawcall.ElementCount, 0, 0);
+				}
+				else
+				{
+					context->Draw(drawcall.ElementCount, 0);
+				}
 			}
 
 			void Present() override
