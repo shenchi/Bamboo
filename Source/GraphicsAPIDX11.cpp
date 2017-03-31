@@ -1340,6 +1340,7 @@ namespace bamboo
 					if (alloc.InUse(handle)) arr[handle].Release();
 
 				// vertex layout is not d3d resource here
+				CLEAR_ARRAY(pipelineStates, MaxPipelineStateCount, psoHandleAlloc);
 				CLEAR_ARRAY(vertexBuffers, MaxVertexBufferCount, vbHandleAlloc);
 				CLEAR_ARRAY(indexBuffers, MaxIndexBufferCount, ibHandleAlloc);
 				CLEAR_ARRAY(constantBuffers, MaxConstantBufferCount, cbHandleAlloc);
