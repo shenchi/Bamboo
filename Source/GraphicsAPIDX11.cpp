@@ -3,6 +3,9 @@
 #include <Windows.h>
 #include <d3d11_1.h>
 
+#include <WICTextureLoader.h>
+#include <DDSTextureLoader.h>
+
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 
@@ -288,7 +291,6 @@ namespace bamboo
 				{
 					context->UpdateSubresource(texture, 0, nullptr, data, pitch, 0);
 				}
-				// else error
 			}
 
 			void Release()
@@ -650,6 +652,30 @@ namespace bamboo
 
 				// Rasterizer
 				{
+					ID3D11RasterizerState* rs = nullptr;
+					D3D11_RASTERIZER_DESC rsDesc = {};
+					rsDesc.FillMode = D3D11_FILL_SOLID;
+					rsDesc.CullMode = static_cast<D3D11_CULL_MODE>(state.CullMode + 1);
+					rsDesc.DepthClipEnable = TRUE;
+					if (FAILED(device->CreateRasterizerState(&rsDesc, &rs)))
+					{
+						return; // TODO
+					}
+					context->RSSetState(rs);
+					rs->Release();
+
+					ID3D11DepthStencilState* ds = nullptr;
+					D3D11_DEPTH_STENCIL_DESC dsDesc = {};
+					dsDesc.DepthEnable = state.DepthEnable;
+					dsDesc.DepthWriteMask = static_cast<D3D11_DEPTH_WRITE_MASK>(state.DepthWrite);
+					dsDesc.DepthFunc = static_cast<D3D11_COMPARISON_FUNC>(state.DepthFunc + 1);
+					if (FAILED(device->CreateDepthStencilState(&dsDesc, &ds)))
+					{
+						return; // TODO
+					}
+					context->OMSetDepthStencilState(ds, 0); // TODO
+					ds->Release();
+
 					D3D11_VIEWPORT vp =
 					{
 						state.Viewport.X,
@@ -1044,6 +1070,81 @@ namespace bamboo
 				{
 					TextureDX11& tex = textures[handle];
 					tex.Reset(format, width, height, dynamic);
+				}
+
+				return TextureHandle{ handle };
+			}
+
+			TextureHandle CreateTexture(const wchar_t* filename) override
+			{
+				uint16_t handle = texHandleAlloc.Alloc();
+
+				if (handle != invalid_handle)
+				{
+					TextureDX11& tex = textures[handle];
+					PixelFormat format = PixelFormat::FORMAT_AUTO;
+					uint32_t width, height;
+
+					ID3D11Resource* res;
+					ID3D11Texture2D* tex2d;
+					ID3D11ShaderResourceView* srv;
+
+					size_t fnLen = wcslen(filename);
+					if (filename[fnLen - 4] == L'.' && 
+						filename[fnLen - 3] == L'd' &&
+						filename[fnLen - 2] == L'd' &&
+						filename[fnLen - 1] == L's')
+					{
+						if (FAILED(DirectX::CreateDDSTextureFromFile(device, filename, &res, &srv)))
+						{
+							texHandleAlloc.Free(handle);
+							return TextureHandle{ invalid_handle };
+						}
+					}
+					else if (FAILED(DirectX::CreateWICTextureFromFile(device, filename, &res, &srv)))
+					{
+						texHandleAlloc.Free(handle);
+						return TextureHandle{ invalid_handle };
+					}
+
+					if (FAILED(res->QueryInterface(IID_PPV_ARGS(&tex2d))))
+					{
+						res->Release();
+						srv->Release();
+
+						texHandleAlloc.Free(handle);
+						return TextureHandle{ invalid_handle };
+					}
+
+					res->Release();
+
+					D3D11_TEXTURE2D_DESC desc = {};
+					tex2d->GetDesc(&desc);
+					
+					for (unsigned i = PixelFormat::FORMAT_AUTO; i < PixelFormat::NUM_PIXEL_FORMAT; ++i)
+					{
+						if (TextureFormatTable[i] == desc.Format)
+						{
+							format = static_cast<PixelFormat>(i);
+							break;
+						}
+					}
+
+					if (PixelFormat::FORMAT_AUTO == format)
+					{
+						tex2d->Release();
+						srv->Release();
+
+						texHandleAlloc.Free(handle);
+						return TextureHandle{ invalid_handle };
+					}
+					
+					width = static_cast<uint32_t>(desc.Width);
+					height = static_cast<uint32_t>(desc.Height);
+					
+					tex.Reset(format, width, height, false);
+					tex.texture = tex2d;
+					tex.srv = srv;
 				}
 
 				return TextureHandle{ handle };

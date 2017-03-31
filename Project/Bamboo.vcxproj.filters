@@ -39,6 +39,12 @@
     <ClCompile Include="..\Source\NativeWindow.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\Source\AssimpLoader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Source\Camera.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Source\Engine.h">
@@ -62,6 +68,12 @@
     <ClInclude Include="..\Source\NativeWindow.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\Source\AssimpLoader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Source\Camera.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="..\Source\Shaders\D3D11\ps_simple.hlsl">
@@ -70,5 +82,20 @@
     <FxCompile Include="..\Source\Shaders\D3D11\vs_simple.hlsl">
       <Filter>Shaders\D3D11</Filter>
     </FxCompile>
+    <FxCompile Include="..\Source\Shaders\D3D11\vs_opaque.hlsl">
+      <Filter>Shaders\D3D11</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Source\Shaders\D3D11\ps_opaque.hlsl">
+      <Filter>Shaders\D3D11</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Source\Shaders\D3D11\vs_skybox.hlsl">
+      <Filter>Shaders\D3D11</Filter>
+    </FxCompile>
+    <FxCompile Include="..\Source\Shaders\D3D11\ps_skybox.hlsl">
+      <Filter>Shaders\D3D11</Filter>
+    </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
   </ItemGroup>
 </Project>

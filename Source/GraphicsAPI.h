@@ -67,6 +67,25 @@ namespace bamboo
 		TYPE_UINT32,
 	};
 
+	enum CullMode
+	{
+		CULL_NONE,
+		CULL_FRONT,
+		CULL_BACK
+	};
+
+	enum ComparisonFunc
+	{
+		COMPARISON_NEVER,
+		COMPARISON_LESS,
+		COMPARISON_EQUAL,
+		COMPARISON_LESS_EQUAL,
+		COMPARISON_GREATER,
+		COMPARISON_NOT_EQUAL,
+		COMPARISON_GREATER_EQUAL,
+		COMPARISON_ALWAYS
+	};
+
 	constexpr size_t MaxVertexInputElement = 16;
 	constexpr size_t MaxVertexBufferBindingSlot = 8;
 	constexpr size_t MaxConstantBufferBindingSlot = 16;
@@ -131,6 +150,28 @@ namespace bamboo
 				uint32_t			_Reserved : 4;
 			};
 			uint32_t				InfoBits;
+		};
+
+		union
+		{
+			struct
+			{
+				uint32_t			CullMode : 2;
+				uint32_t			_Reserved : 30;
+			};
+			uint32_t				RasterizerState;
+		};
+
+		union
+		{
+			struct
+			{
+				uint32_t			DepthEnable : 1;
+				uint32_t			DepthWrite : 1;
+				uint32_t			DepthFunc : 3;
+				uint32_t			_Reserved : 27;
+			};
+			uint32_t				DepthStencilState;
 		};
 
 		VertexBufferHandle			VertexBuffers[MaxVertexBufferBindingSlot];
@@ -224,6 +265,7 @@ namespace bamboo
 
 		// Textures
 		virtual TextureHandle CreateTexture(PixelFormat format, uint32_t width, uint32_t height, bool dynamic) = 0;
+		virtual TextureHandle CreateTexture(const wchar_t* filename) = 0;
 		virtual void DestroyTexture(TextureHandle handle) = 0;
 		virtual void UpdateTexture(TextureHandle handle, size_t pitch, const void* data) = 0;
 
