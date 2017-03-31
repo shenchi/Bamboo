@@ -186,9 +186,16 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	auto cb2 = api->CreateConstantBuffer(instanceConstants.size);
 	api->UpdateConstantBuffer(cb2, instanceConstants.size, instanceConstants.ptr);
 
-	auto cubemap = api->CreateTexture(L"Assets/Textures/skybox.dds");
+	auto cb3 = api->CreateConstantBuffer(sizeof(DirectX::XMFLOAT4));
+	{
+		float camPos[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		api->UpdateConstantBuffer(cb3, sizeof(DirectX::XMFLOAT4), camPos);
+	}
 
-	auto tex = api->CreateTexture(L"Assets/Textures/wood.jpg");
+	auto cubeMap = api->CreateTexture(L"Assets/Textures/craterlake.dds");
+
+	auto diffuseTex = api->CreateTexture(L"Assets/Textures/stone_wall.tif");
+	auto normalMap = api->CreateTexture(L"Assets/Textures/stone_wall_normalmap.tif");
 
 	auto sampler = api->CreateSampler();
 
@@ -209,12 +216,15 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 	state.CullMode = bamboo::CULL_BACK;
 
-	state.ConstantBufferCount = 2;
+	state.ConstantBufferCount = 3;
 	state.ConstantBuffers[0] = { cb1, { 1, 0, 0} };
 	state.ConstantBuffers[1] = { cb2, { 1, 0, 0 } };
+	state.ConstantBuffers[2] = { cb3, { 0, 1, 0 } };
 
-	state.TextureCount = 1;
-	state.Textures[0] = { tex, {0, 1, 0} };
+	state.TextureCount = 3;
+	state.Textures[0] = { cubeMap, { 0, 1, 0 } };
+	state.Textures[1] = { diffuseTex, {0, 1, 0} };
+	state.Textures[2] = { normalMap, { 0, 1, 0 } };
 
 	state.SamplerCount = 1;
 	state.Samplers[0] = { sampler, {0, 1, 0} };
@@ -232,7 +242,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	stateSkyBox.PixelShader = ps_skybox;
 	stateSkyBox.CullMode = bamboo::CULL_FRONT;
 	stateSkyBox.ConstantBufferCount = 1;
-	stateSkyBox.Textures[0] = { cubemap, {0, 1, 0} };
+	stateSkyBox.TextureCount = 1;
 	stateSkyBox.DepthFunc = bamboo::COMPARISON_LESS_EQUAL;
 
 	float clearColor[] = { 0.0f, 0.0f, 0.0f, 1.0f };
@@ -311,6 +321,9 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 			*(reinterpret_cast<XMFLOAT4X4*>(frameConstants.ptr) + 1) = camera.GetProjectionMatrix();
 
 			api->UpdateConstantBuffer(cb1, frameConstants.size, frameConstants.ptr);
+
+			const DirectX::XMFLOAT3& camPos = camera.GetPosition();
+			api->UpdateConstantBuffer(cb3, sizeof(DirectX::XMFLOAT3), &camPos);
 		}
 
 		api->Clear(invalidRTHandle, clearColor);
