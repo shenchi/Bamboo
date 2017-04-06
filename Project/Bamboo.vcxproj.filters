@@ -72,6 +72,9 @@
     <ClCompile Include="..\Source\3rd_party\DirectXTex\WICTextureLoader12.cpp">
       <Filter>3rd_party\DirectXTex</Filter>
     </ClCompile>
+    <ClCompile Include="..\Source\GraphicsAPIDX12.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Source\Engine.h">
@@ -127,6 +130,9 @@
     </ClInclude>
     <ClInclude Include="..\Source\3rd_party\DirectXTex\d3dx12.h">
       <Filter>3rd_party\DirectXTex</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Source\GraphicsAPIDX12.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

@@ -312,7 +312,7 @@ namespace bamboo
 				desc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
 				desc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
 				desc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
-				desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;// D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+				desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;// D3D11_FILTER_MIN_MAG_MIP_LINEAR;
 				desc.MaxLOD = D3D11_FLOAT32_MAX;
 
 				if (FAILED(device->CreateSamplerState(&desc, &sampler)))
