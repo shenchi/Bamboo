@@ -11,6 +11,7 @@
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3d12.lib")
 
+#define RELEASE(x) if (nullptr != (x)) { (x)->Release(); (x) = nullptr; }
 #define CE(x, e) if (S_OK != (x)) return (e);
 #define CHECKED(x) if (S_OK != (x)) return -1;
 
@@ -18,10 +19,28 @@ namespace bamboo
 {
 	namespace dx12
 	{
+		constexpr size_t RTVHeapSize = 1024;
+		constexpr size_t DSVHeapSize = 1024;
+		constexpr size_t SRVHeapSize = 1024;
 
 		struct PipelineStateDX12
 		{
 
+		};
+
+		struct TextureDX12
+		{
+			ID3D12Resource*				texture;
+			uint16_t					srv;
+			uint16_t					rtv;
+			uint16_t					dsv;
+
+			TextureType					type;
+			PixelFormat					format;
+			uint32_t					width;
+			uint32_t					height;
+			uint32_t					depthOrArraySize;
+			uint32_t					mipLevels;
 		};
 
 		struct GraphicsAPIDX12 : public GraphicsAPI
@@ -46,11 +65,21 @@ namespace bamboo
 			UINT64						frameIndex;
 
 
-			ID3D12DescriptorHeap*		rtvHeap;
-			UINT						rtvHeapInc;
+			HandleAlloc<RTVHeapSize>	rtvHeapAlloc;
+			HandleAlloc<DSVHeapSize>	dsvHeapAlloc;
+			HandleAlloc<SRVHeapSize>	srvHeapAlloc;
 
+			ID3D12DescriptorHeap*		rtvHeap;
 			ID3D12DescriptorHeap*		dsvHeap;
+			ID3D12DescriptorHeap*		srvHeap;
+
+			UINT						rtvHeapInc;
 			UINT						dsvHeapInc;
+			UINT						srvHeapInc;
+
+			TextureDX12					textures[MaxTextureCount];
+
+
 
 			int Init(void* windowHandle)
 			{
@@ -162,7 +191,7 @@ namespace bamboo
 				{
 					D3D12_DESCRIPTOR_HEAP_DESC desc = {};
 					desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-					//desc.NumDescriptors = MaxRenderTargetCount;
+					desc.NumDescriptors = RTVHeapSize;
 					CHECKED(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&rtvHeap)));
 					rtvHeapInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 				}
@@ -172,8 +201,8 @@ namespace bamboo
 
 					for (UINT i = 0; i < 2; ++i)
 					{
-						//CHECKED(swapChain->GetBuffer(i, IID_PPV_ARGS(&backBuffers[i])));
-						//device->CreateRenderTargetView(backBuffers[i], nullptr, handle);
+						CHECKED(swapChain->GetBuffer(i, IID_PPV_ARGS(&backBuffers[i])));
+						device->CreateRenderTargetView(backBuffers[i], nullptr, handle);
 						handle.ptr += rtvHeapInc;
 					}
 				}
@@ -181,7 +210,7 @@ namespace bamboo
 				{
 					D3D12_DESCRIPTOR_HEAP_DESC desc = {};
 					desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
-					//desc.NumDescriptors = MaxRenderTargetCount;
+					desc.NumDescriptors = DSVHeapSize;
 					CHECKED(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&dsvHeap)));
 					dsvHeapInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 				}
@@ -205,9 +234,9 @@ namespace bamboo
 					clearValue[0].DepthStencil.Depth = 1.0f;
 					clearValue[0].DepthStencil.Stencil = 0;
 
-					//CHECKED(device->CreateCommittedResource(&prop, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, clearValue, IID_PPV_ARGS(&depthBuffer)));
+					CHECKED(device->CreateCommittedResource(&prop, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, clearValue, IID_PPV_ARGS(&depthBuffer)));
 
-					//device->CreateDepthStencilView(depthBuffer, nullptr, dsvHeap->GetCPUDescriptorHandleForHeapStart());
+					device->CreateDepthStencilView(depthBuffer, nullptr, dsvHeap->GetCPUDescriptorHandleForHeapStart());
 				}
 
 				return 0;
@@ -217,6 +246,39 @@ namespace bamboo
 			{
 
 			}
+
+
+#pragma region resource creation
+
+			uint16_t CreateTexture(TextureType type, PixelFormat format, uint32_t bindFlags)
+			{
+				uint16_t handle = texHandleAlloc.Alloc();
+				if (invalid_handle == handle)
+					return handle;
+
+				TextureDX12& tex = textures[handle];
+
+				//CD3DX12_HEAP_PROPERTIES heap = 
+
+				//device->CreateCommittedResource()
+
+				return handle;
+			}
+
+			void DestroyTexture(uint16_t handle)
+			{
+				if (invalid_handle == handle)
+					return;
+
+				TextureDX12& tex = textures[handle];
+
+				RELEASE(tex.texture);
+				if (invalid_handle != tex.srv) rtvHeapAlloc.Free(tex.srv);
+				if (invalid_handle != tex.rtv) rtvHeapAlloc.Free(tex.rtv);
+				if (invalid_handle != tex.dsv) rtvHeapAlloc.Free(tex.dsv);
+			}
+
+#pragma endregion
 
 
 			// interface implementation
