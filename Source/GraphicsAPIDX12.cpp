@@ -115,7 +115,7 @@ namespace bamboo
 				CHECKED(D3D12CreateDevice(adaptor, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device)));
 				adaptor->Release();
 
-				{ 
+				{
 					D3D12_COMMAND_QUEUE_DESC desc = {};
 					desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 					CHECKED(device->CreateCommandQueue(&desc, IID_PPV_ARGS(&cmdQueue)));
@@ -162,7 +162,7 @@ namespace bamboo
 				{
 					D3D12_DESCRIPTOR_HEAP_DESC desc = {};
 					desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-					desc.NumDescriptors = MaxRenderTargetCount;
+					//desc.NumDescriptors = MaxRenderTargetCount;
 					CHECKED(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&rtvHeap)));
 					rtvHeapInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 				}
@@ -172,8 +172,8 @@ namespace bamboo
 
 					for (UINT i = 0; i < 2; ++i)
 					{
-						CHECKED(swapChain->GetBuffer(i, IID_PPV_ARGS(&backBuffers[i])));
-						device->CreateRenderTargetView(backBuffers[i], nullptr, handle);
+						//CHECKED(swapChain->GetBuffer(i, IID_PPV_ARGS(&backBuffers[i])));
+						//device->CreateRenderTargetView(backBuffers[i], nullptr, handle);
 						handle.ptr += rtvHeapInc;
 					}
 				}
@@ -181,7 +181,7 @@ namespace bamboo
 				{
 					D3D12_DESCRIPTOR_HEAP_DESC desc = {};
 					desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
-					desc.NumDescriptors = MaxRenderTargetCount;
+					//desc.NumDescriptors = MaxRenderTargetCount;
 					CHECKED(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&dsvHeap)));
 					dsvHeapInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 				}
@@ -205,9 +205,9 @@ namespace bamboo
 					clearValue[0].DepthStencil.Depth = 1.0f;
 					clearValue[0].DepthStencil.Stencil = 0;
 
-					CHECKED(device->CreateCommittedResource(&prop, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, clearValue, IID_PPV_ARGS(&depthBuffer)));
+					//CHECKED(device->CreateCommittedResource(&prop, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, clearValue, IID_PPV_ARGS(&depthBuffer)));
 
-					device->CreateDepthStencilView(depthBuffer, nullptr, dsvHeap->GetCPUDescriptorHandleForHeapStart());
+					//device->CreateDepthStencilView(depthBuffer, nullptr, dsvHeap->GetCPUDescriptorHandleForHeapStart());
 				}
 
 				return 0;
@@ -219,10 +219,13 @@ namespace bamboo
 			}
 
 
+			// interface implementation
+#pragma region interface implementation
+
 			// Pipeline States
 			PipelineStateHandle CreatePipelineState(const PipelineState& state) override
 			{
-
+				return PipelineStateHandle{ invalid_handle };
 			}
 
 			void DestroyPipelineState(PipelineStateHandle handle) override
@@ -230,87 +233,33 @@ namespace bamboo
 
 			}
 
+
 			// Buffers
-			VertexBufferHandle CreateVertexBuffer(size_t size, bool dynamic) override
+			BufferHandle CreateBuffer(size_t size, uint32_t bindingFlags, bool dynamic = false) override
+			{
+				return BufferHandle{ invalid_handle };
+			}
+
+			void DestroyBuffer(BufferHandle handle) override
 			{
 
 			}
 
-			void DestroyVertexBuffer(VertexBufferHandle handle) override
+			void UpdateBuffer(BufferHandle handle, size_t size, const void* data, size_t stride = 0) override
 			{
 
 			}
 
-			void UpdateVertexBuffer(VertexBufferHandle handle, size_t size, const void* data, size_t stride) override
-			{
-
-			}
-
-			IndexBufferHandle CreateIndexBuffer(size_t size, bool dynamic) override
-			{
-
-			}
-
-			void DestroyIndexBuffer(IndexBufferHandle handle) override
-			{
-
-			}
-
-			void UpdateIndexBuffer(IndexBufferHandle handle, size_t size, const void* data, DataType type) override
-			{
-
-			}
-
-			ConstantBufferHandle CreateConstantBuffer(size_t size) override
-			{
-
-			}
-
-			void DestroyConstantBuffer(ConstantBufferHandle handle) override
-			{
-
-			}
-
-			void UpdateConstantBuffer(ConstantBufferHandle handle, size_t size, const void* data) override
-			{
-
-			}
-
-			// Render targets
-			RenderTargetHandle CreateRenderTarget(PixelFormat format, uint32_t width, uint32_t height, bool isDepth, bool hasStencil) override
-			{
-
-			}
-
-			void DestroyRenderTarget(RenderTargetHandle handle) override
-			{
-
-			}
-
-			void Clear(RenderTargetHandle handle, float color[4]) override
-			{
-
-			}
-
-			void ClearDepth(RenderTargetHandle handle, float depth) override
-			{
-
-			}
-
-			void ClearDepthStencil(RenderTargetHandle handle, float depth, uint8_t stencil) override
-			{
-
-			}
 
 			// Textures
-			TextureHandle CreateTexture(PixelFormat format, uint32_t width, uint32_t height, bool dynamic) override
+			TextureHandle CreateTexture(TextureType type, PixelFormat format, uint32_t bindFlags, uint32_t width, uint32_t height = 1, uint32_t depth = 1, uint32_t arraySize = 1, uint32_t mipLevels = 1, bool dynamic = false) override
 			{
-
+				return TextureHandle{ invalid_handle };
 			}
 
 			TextureHandle CreateTexture(const wchar_t* filename) override
 			{
-
+				return TextureHandle{ invalid_handle };
 			}
 
 			void DestroyTexture(TextureHandle handle) override
@@ -323,21 +272,39 @@ namespace bamboo
 
 			}
 
+
+			void Clear(TextureHandle handle, float color[4]) override
+			{
+
+			}
+
+			void ClearDepth(TextureHandle handle, float depth) override
+			{
+
+			}
+
+			void ClearDepthStencil(TextureHandle handle, float depth, uint8_t stencil) override
+			{
+
+			}
+
+
 			// Samplers
 			SamplerHandle CreateSampler() override
 			{
+				return SamplerHandle{ invalid_handle };
+			}
 
-			} 
-			
 			void DestroySampler(SamplerHandle handle) override
 			{
 
 			}
 
+
 			// Shaders
 			VertexShaderHandle CreateVertexShader(const void* bytecode, size_t size) override
 			{
-
+				return VertexShaderHandle{ invalid_handle };
 			}
 
 			void DestroyVertexShader(VertexShaderHandle handle) override
@@ -345,9 +312,10 @@ namespace bamboo
 
 			}
 
+
 			PixelShaderHandle CreatePixelShader(const void* bytecode, size_t size) override
 			{
-
+				return PixelShaderHandle{ invalid_handle };
 			}
 
 			void DestroyPixelShader(PixelShaderHandle handle) override
@@ -355,11 +323,13 @@ namespace bamboo
 
 			}
 
+
 			// Draw Functions
 			void Draw(PipelineStateHandle stateHandle, const DrawCall& drawcall) override
 			{
 
 			}
+
 
 			// Swap Chains
 			// TODO, bind swap chains with render targets
@@ -368,11 +338,15 @@ namespace bamboo
 
 			}
 
+
 			// Clean up
 			void Shutdown() override
 			{
 
 			}
+
+#pragma endregion
+			// interface end
 
 		};
 
