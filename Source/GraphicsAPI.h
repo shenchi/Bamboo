@@ -10,10 +10,7 @@ namespace bamboo
 	constexpr uint16_t invalid_handle = UINT16_MAX;
 
 	HANDLE_DECLARE(PipelineState);
-	HANDLE_DECLARE(VertexBuffer);
-	HANDLE_DECLARE(IndexBuffer);
-	HANDLE_DECLARE(ConstantBuffer);
-	HANDLE_DECLARE(RenderTarget);
+	HANDLE_DECLARE(Buffer);
 	HANDLE_DECLARE(Texture);
 	HANDLE_DECLARE(Sampler);
 	HANDLE_DECLARE(VertexShader);
@@ -88,18 +85,33 @@ namespace bamboo
 		COMPARISON_ALWAYS
 	};
 
+	enum BindingFlag
+	{
+		BINDING_VERTEX_BUFFER = 1 << 0,
+		BINDING_INDEX_BUFFER = 1 << 1,
+		BINDING_CONSTANT_BUFFER = 1 << 2,
+		BINDING_SHADER_RESOURCE = 1 << 3,
+		BINDING_RENDER_TARGET = 1 << 5,
+		BINDING_DEPTH_STENCIL = 1 << 6,
+	};
+
+	enum TextureType
+	{
+		TEXTURE_1D,
+		TEXTURE_2D,
+		TEXTURE_3D,
+		TEXTURE_CUBE,
+	};
+
 	constexpr size_t MaxVertexInputElement = 16;
 	constexpr size_t MaxVertexBufferBindingSlot = 8;
 	constexpr size_t MaxConstantBufferBindingSlot = 16;
 	constexpr size_t MaxRenderTargetBindingSlot = 8;
-	constexpr size_t MaxTextureBindingSlot = 16; // 128;
+	constexpr size_t MaxShaderResourceBindingSlot = 16; // 128;
 	constexpr size_t MaxSamplerBindingSlot = 16;
 
 	constexpr size_t MaxPipelineStateCount = 1024;
-	constexpr size_t MaxVertexBufferCount = 1024;
-	constexpr size_t MaxIndexBufferCount = 1024;
-	constexpr size_t MaxConstantBufferCount = 1024;
-	constexpr size_t MaxRenderTargetCount = 32;
+	constexpr size_t MaxBufferCount = 4096;
 	constexpr size_t MaxTextureCount = 1024;
 	constexpr size_t MaxSamplerCount = 1024;
 	constexpr size_t MaxVertexShaderCount = 1024;
@@ -188,12 +200,12 @@ namespace bamboo
 			uint32_t				InfoBits;
 		};
 
-		VertexBufferHandle			VertexBuffers[MaxVertexBufferBindingSlot];
-		IndexBufferHandle			IndexBuffer;
+		BufferHandle				VertexBuffers[MaxVertexBufferBindingSlot];
+		BufferHandle				IndexBuffer;
 
 		struct
 		{
-			ConstantBufferHandle	Handle;
+			BufferHandle			Handle;
 			union
 			{
 				struct
@@ -206,23 +218,28 @@ namespace bamboo
 			};
 		}							ConstantBuffers[MaxConstantBufferBindingSlot];
 
-		RenderTargetHandle			RenderTargets[MaxRenderTargetBindingSlot];
-		RenderTargetHandle			DepthStencil;
+		TextureHandle				RenderTargets[MaxRenderTargetBindingSlot];
+		TextureHandle				DepthStencil;
 
 		struct
 		{
-			TextureHandle			Handle;
+			union
+			{
+				TextureHandle			Texture;
+				BufferHandle			Buffer;
+			};
 			union
 			{
 				struct
 				{
 					uint16_t			BindingVertexShader : 1;
 					uint16_t			BindingPixelShader : 1;
-					uint16_t			_Reserved : 14;
+					uint16_t			_Reserved : 13;
+					uint16_t			IsBuffer : 1;
 				};
 				uint16_t				BindingFlag;
 			};
-		}							Textures[MaxTextureBindingSlot];
+		}							ShaderResources[MaxShaderResourceBindingSlot];
 
 		struct
 		{
@@ -250,31 +267,19 @@ namespace bamboo
 		virtual void DestroyPipelineState(PipelineStateHandle handle) = 0;
 
 		// Buffers
-		virtual VertexBufferHandle CreateVertexBuffer(size_t size, bool dynamic) = 0;
-		virtual void DestroyVertexBuffer(VertexBufferHandle handle) = 0;
-		virtual void UpdateVertexBuffer(VertexBufferHandle handle, size_t size, const void* data, size_t stride) = 0;
-
-		virtual IndexBufferHandle CreateIndexBuffer(size_t size, bool dynamic) = 0;
-		virtual void DestroyIndexBuffer(IndexBufferHandle handle) = 0;
-		virtual void UpdateIndexBuffer(IndexBufferHandle handle, size_t size, const void* data, DataType type) = 0;
-
-		virtual ConstantBufferHandle CreateConstantBuffer(size_t size) = 0;
-		virtual void DestroyConstantBuffer(ConstantBufferHandle handle) = 0;
-		virtual void UpdateConstantBuffer(ConstantBufferHandle handle, size_t size, const void* data) = 0;
-
-		// Render targets
-		virtual RenderTargetHandle CreateRenderTarget(PixelFormat format, uint32_t width, uint32_t height, bool isDepth, bool hasStencil) = 0;
-		virtual void DestroyRenderTarget(RenderTargetHandle handle) = 0;
-
-		virtual void Clear(RenderTargetHandle handle, float color[4]) = 0;
-		virtual void ClearDepth(RenderTargetHandle handle, float depth) = 0;
-		virtual void ClearDepthStencil(RenderTargetHandle handle, float depth, uint8_t stencil) = 0;
+		virtual BufferHandle CreateBuffer(size_t size, uint32_t bindingFlags, bool dynamic = false) = 0;
+		virtual void DestroyBuffer(BufferHandle handle) = 0;
+		virtual void UpdateBuffer(BufferHandle handle, size_t size, const void* data, size_t stride = 0) = 0;
 
 		// Textures
-		virtual TextureHandle CreateTexture(PixelFormat format, uint32_t width, uint32_t height, bool dynamic) = 0;
+		virtual TextureHandle CreateTexture(TextureType type, PixelFormat format, uint32_t bindFlags, uint32_t width, uint32_t height = 1, uint32_t depth = 1, uint32_t arraySize = 1, uint32_t mipLevels = 1, bool dynamic = false) = 0;
 		virtual TextureHandle CreateTexture(const wchar_t* filename) = 0;
 		virtual void DestroyTexture(TextureHandle handle) = 0;
 		virtual void UpdateTexture(TextureHandle handle, size_t pitch, const void* data) = 0;
+
+		virtual void Clear(TextureHandle handle, float color[4]) = 0;
+		virtual void ClearDepth(TextureHandle handle, float depth) = 0;
+		virtual void ClearDepthStencil(TextureHandle handle, float depth, uint8_t stencil) = 0;
 
 		// Samplers
 		virtual SamplerHandle CreateSampler() = 0; // TODO
@@ -298,10 +303,7 @@ namespace bamboo
 		virtual void Shutdown() = 0;
 
 		HandleAlloc<MaxPipelineStateCount>		psoHandleAlloc;
-		HandleAlloc<MaxVertexBufferCount>		vbHandleAlloc;
-		HandleAlloc<MaxIndexBufferCount>		ibHandleAlloc;
-		HandleAlloc<MaxConstantBufferCount>		cbHandleAlloc;
-		HandleAlloc<MaxRenderTargetCount>		rtHandleAlloc;
+		HandleAlloc<MaxBufferCount>				bufHandleAlloc;
 		HandleAlloc<MaxTextureCount>			texHandleAlloc;
 		HandleAlloc<MaxSamplerCount>			sampHandleAlloc;
 		HandleAlloc<MaxVertexShaderCount>		vsHandleAlloc;

@@ -9,6 +9,10 @@
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 
+#define RELEASE(x) if (nullptr != (x)) { (x)->Release(); (x) = nullptr; }
+#define C(x, ret) if ((x) != S_OK) { return (ret); }
+#define CHECKED(x) if ((x) != S_OK) { return false; }
+
 namespace bamboo
 {
 	namespace dx11
@@ -102,12 +106,26 @@ namespace bamboo
 			DXGI_FORMAT_D24_UNORM_S8_UINT,
 		};
 
+		PixelFormat PixelFormatFromDXGI(DXGI_FORMAT format)
+		{
+			for (unsigned i = PixelFormat::FORMAT_AUTO; i < PixelFormat::NUM_PIXEL_FORMAT; ++i)
+			{
+				if (TextureFormatTable[i] == format)
+				{
+					return static_cast<PixelFormat>(i);
+				}
+			}
+			return FORMAT_AUTO;
+		}
+
 		struct BufferDX11
 		{
-			ID3D11Buffer*	buffer;
-			UINT			size;
-			UINT			bindFlags;
-			bool			dynamic;
+			ID3D11Buffer*				buffer;
+			ID3D11ShaderResourceView*	srv;
+			UINT						size;
+			UINT						stride;
+			UINT						bindFlags;
+			bool						dynamic;
 
 			void Reset(UINT size, UINT bindFlags, bool dynamic)
 			{
@@ -115,37 +133,51 @@ namespace bamboo
 				this->size = size;
 				this->bindFlags = bindFlags;
 				this->dynamic = dynamic;
+				stride = 0;
 			}
 
 			void Release()
 			{
-				if (nullptr != buffer)
-				{
-					buffer->Release();
-					buffer = nullptr;
-					size = 0;
-					dynamic = false;
-				}
+				RELEASE(buffer);
+				RELEASE(srv);
+				size = 0;
+				bindFlags = 0;
+				dynamic = false;
+				stride = 0;
 			}
 
-
-			void Update(ID3D11Device1* device, ID3D11DeviceContext1* context, UINT size, const void* data)
+			bool Update(ID3D11Device1* device, ID3D11DeviceContext1* context, UINT size, const void* data, UINT stride)
 			{
 				if (nullptr == buffer)
 				{
+					this->stride = stride;
+
 					D3D11_BUFFER_DESC desc = {};
 					desc.BindFlags = bindFlags;
 					desc.ByteWidth = size;
-					desc.Usage = dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_IMMUTABLE;
+					desc.Usage = dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT;
+					desc.StructureByteStride = stride;
+					if ((bindFlags & BINDING_SHADER_RESOURCE) && stride > sizeof(float) * 4)
+						desc.MiscFlags |= D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 					if (dynamic) desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 
 					D3D11_SUBRESOURCE_DATA data_desc = {};
 					data_desc.pSysMem = data;
 
-					if (FAILED(device->CreateBuffer(&desc, &data_desc, &(buffer))))
+					CHECKED(device->CreateBuffer(&desc, &data_desc, &(buffer)));
+
+					if ((bindFlags & BINDING_SHADER_RESOURCE) != 0)
 					{
-						// error
-						return;
+						D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+						srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+						srvDesc.Buffer.NumElements = this->size / stride;
+						srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+						if (FAILED(device->CreateShaderResourceView(buffer, &srvDesc, &srv)))
+						{
+							RELEASE(buffer);
+							return false;
+						}
+	
 					}
 				}
 				else if (dynamic)
@@ -155,119 +187,148 @@ namespace bamboo
 					memcpy(res.pData, data, min(size, this->size));
 					context->Unmap(buffer, 0);
 				}
-				// else error
-			}
-		};
-
-		struct GeometryBufferDX11 : public BufferDX11
-		{
-			UINT			stride;
-		};
-
-		struct IndexBufferDX11 : public BufferDX11
-		{
-			DXGI_FORMAT		type;
-		};
-
-		struct RenderTargetDX11
-		{
-			union
-			{
-				ID3D11RenderTargetView*		renderTargetView;
-				ID3D11DepthStencilView*		depthStencilView;
-			};
-
-			PixelFormat					format;
-			uint32_t					width;
-			uint32_t					height;
-			bool						isDepth;
-			bool						hasStencil;
-
-			void Reset(PixelFormat format, uint32_t width, uint32_t height, bool isDepth, bool hasStencil)
-			{
-				Release();
-				this->format = format;
-				this->width = width;
-				this->height = height;
-				this->isDepth = isDepth;
-				this->hasStencil = hasStencil;
-			}
-
-			void Release()
-			{
-				if (isDepth)
-				{
-					if (nullptr != depthStencilView)
-					{
-						depthStencilView->Release();
-						depthStencilView = nullptr;
-					}
-				}
 				else
 				{
-					if (nullptr != renderTargetView)
-					{
-						renderTargetView->Release();
-						renderTargetView = nullptr;
-					}
+					context->UpdateSubresource(buffer, 0, nullptr, data, 0, 0);
 				}
+
+				return true;
 			}
 		};
 
 		struct TextureDX11
 		{
-			ID3D11Texture2D*			texture;
+			ID3D11Resource*				texture;
 			ID3D11ShaderResourceView*	srv;
+			ID3D11RenderTargetView*		rtv;
+			ID3D11DepthStencilView*		dsv;
 
+			UINT						bindFlags;
+
+			TextureType					type;
 			PixelFormat					format;
 			uint32_t					width;
 			uint32_t					height;
+			uint32_t					depth;
+			uint32_t					arraySize;
+			uint32_t					mipLevels;
+
 			bool						dynamic;
 
-			void Reset(PixelFormat format, uint32_t width, uint32_t height, bool dynamic)
+			void Reset(TextureType type, PixelFormat format, uint32_t bindFlags, uint32_t width, uint32_t height = 1, uint32_t depth = 1, uint32_t arraySize = 1, uint32_t mipLevels = 1, bool dynamic = false)
 			{
 				Release();
+				this->type = type;
 				this->format = format;
+				this->bindFlags = bindFlags;
 				this->width = width;
 				this->height = height;
+				this->depth = depth;
+				this->arraySize = arraySize;
+				this->mipLevels = mipLevels;
 				this->dynamic = dynamic;
 			}
 
-			void Update(ID3D11Device1* device, ID3D11DeviceContext1* context, UINT pitch, const void* data)
+			bool Update(ID3D11Device1* device, ID3D11DeviceContext1* context, UINT pitch, const void* data)
 			{
 				if (nullptr == texture)
 				{
-					D3D11_TEXTURE2D_DESC desc = {};
-					desc.Width = width;
-					desc.Height = height;
-					desc.MipLevels = 1; // TODO
-					desc.ArraySize = 1; // TODO
-					desc.Format = TextureFormatTable[format];
-					desc.SampleDesc.Count = 1;
-					desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-					desc.Usage = dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT;
-					if (dynamic) desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-
-					D3D11_SUBRESOURCE_DATA data_desc = {};
-					data_desc.pSysMem = data;
-					data_desc.SysMemPitch = pitch;
-
-					if (FAILED(device->CreateTexture2D(&desc, &data_desc, &(texture))))
+					if (type == TEXTURE_1D)
 					{
-						// error
-						return;
+						D3D11_TEXTURE1D_DESC desc = {};
+						
+						desc.Width = width;
+						desc.MipLevels = mipLevels;
+						desc.ArraySize = arraySize;
+						desc.Format = TextureFormatTable[format];
+						desc.BindFlags = bindFlags;
+						desc.Usage = dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT;
+						if (dynamic) desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+
+						D3D11_SUBRESOURCE_DATA data_desc = {};
+						data_desc.pSysMem = data;
+						data_desc.SysMemPitch = pitch;
+
+						ID3D11Texture1D* tex1d = nullptr;
+						CHECKED(device->CreateTexture1D(&desc, &data_desc, &(tex1d)));
+						texture = tex1d;
+					}
+					else if (type == TEXTURE_2D || type == TEXTURE_CUBE)
+					{
+						D3D11_TEXTURE2D_DESC desc = {};
+						desc.Width = width;
+						desc.Height = height;
+						desc.MipLevels = mipLevels; // TODO
+						desc.ArraySize = arraySize;
+						desc.Format = TextureFormatTable[format];
+						desc.SampleDesc.Count = 1;
+						desc.BindFlags = bindFlags;
+						desc.Usage = dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT;
+						if (dynamic) desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+						if (type == TEXTURE_CUBE)
+							desc.MiscFlags |= D3D11_RESOURCE_MISC_TEXTURECUBE;
+
+						D3D11_SUBRESOURCE_DATA data_desc = {};
+						data_desc.pSysMem = data;
+						data_desc.SysMemPitch = pitch;
+
+						ID3D11Texture2D* tex2d = nullptr;
+						CHECKED(device->CreateTexture2D(&desc, &data_desc, &(tex2d)));
+						texture = tex2d;
+					}
+					else if (type == TEXTURE_3D)
+					{
+						D3D11_TEXTURE3D_DESC desc = {};
+						desc.Width = width;
+						desc.Height = height;
+						desc.Depth = depth;
+						desc.MipLevels = mipLevels; // TODO
+						desc.Format = TextureFormatTable[format];
+						desc.BindFlags = bindFlags;
+						desc.Usage = dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT;
+						if (dynamic) desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+						if (type == TEXTURE_CUBE)
+							desc.MiscFlags |= D3D11_RESOURCE_MISC_TEXTURECUBE;
+
+						D3D11_SUBRESOURCE_DATA data_desc = {};
+						data_desc.pSysMem = data;
+						data_desc.SysMemPitch = pitch;
+
+						ID3D11Texture3D* tex3d = nullptr;
+						CHECKED(device->CreateTexture3D(&desc, &data_desc, &(tex3d)));
+						texture = tex3d;
 					}
 
-					if (FAILED(device->CreateShaderResourceView(texture, nullptr, &srv)))
+					if (bindFlags & BINDING_SHADER_RESOURCE)
 					{
-						// error;
-						texture->Release();
-						texture = nullptr;
-						return;
+						if (FAILED(device->CreateShaderResourceView(texture, nullptr, &srv)))
+						{
+							RELEASE(texture);
+							return false;
+						}
 					}
+					if (bindFlags & BINDING_RENDER_TARGET)
+					{
+						// TODO mipmaps
+						if (FAILED(device->CreateRenderTargetView(texture, nullptr, &rtv)))
+						{
+							RELEASE(texture);
+							return false;
+						}
+					}
+					if (bindFlags & BINDING_DEPTH_STENCIL)
+					{
+						if (FAILED(device->CreateDepthStencilView(texture, nullptr, &dsv)))
+						{
+							RELEASE(texture);
+							return false;
+						}
+					}
+
 				}
 				else if (dynamic)
 				{
+					// TODO for mipmaps and texture array
 					D3D11_MAPPED_SUBRESOURCE res = {};
 					context->Map(texture, 0, D3D11_MAP_WRITE_DISCARD, 0, &res);
 					const uint8_t* pSrc = reinterpret_cast<const uint8_t*>(data);
@@ -285,19 +346,19 @@ namespace bamboo
 				}
 				else
 				{
+					// TODO for mipmaps and texture array
 					context->UpdateSubresource(texture, 0, nullptr, data, pitch, 0);
 				}
+
+				return true;
 			}
 
 			void Release()
 			{
-				if (nullptr != texture)
-				{
-					texture->Release();
-					texture = nullptr;
-					srv->Release();
-					srv = nullptr;
-				}
+				RELEASE(texture);
+				RELEASE(srv);
+				RELEASE(rtv);
+				RELEASE(dsv);
 			}
 		};
 
@@ -312,7 +373,7 @@ namespace bamboo
 				desc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
 				desc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
 				desc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
-				desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;// D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+				desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
 				desc.MaxLOD = D3D11_FLOAT32_MAX;
 
 				if (FAILED(device->CreateSamplerState(&desc, &sampler)))
@@ -323,11 +384,7 @@ namespace bamboo
 
 			void Release()
 			{
-				if (nullptr != sampler)
-				{
-					sampler->Release();
-					sampler = nullptr;
-				}
+				RELEASE(sampler);
 			}
 		};
 
@@ -339,13 +396,12 @@ namespace bamboo
 
 			void Release()
 			{
-				if (nullptr != shader)
+				RELEASE(shader);
+				if (nullptr != byteCode)
 				{
-					shader->Release();
-					shader = nullptr;
-
 					delete[] reinterpret_cast<uint8_t*>(byteCode);
 					byteCode = nullptr;
+					length = 0;
 				}
 			}
 		};
@@ -356,11 +412,7 @@ namespace bamboo
 
 			void Release()
 			{
-				if (nullptr != shader)
-				{
-					shader->Release();
-					shader = nullptr;
-				}
+				RELEASE(shader);
 			}
 		};
 
@@ -444,23 +496,9 @@ namespace bamboo
 
 			void Release()
 			{
-				if (nullptr != layout)
-				{
-					layout->Release();
-					layout = nullptr;
-				}
-
-				if (nullptr != rsState)
-				{
-					rsState->Release();
-					rsState = nullptr;
-				}
-
-				if (nullptr != dsState)
-				{
-					dsState->Release();
-					dsState = nullptr;
-				}
+				RELEASE(layout);
+				RELEASE(rsState);
+				RELEASE(dsState);
 			}
 		};
 
@@ -478,11 +516,7 @@ namespace bamboo
 
 			PipelineStateDX11			pipelineStates[MaxPipelineStateCount];
 
-			GeometryBufferDX11			vertexBuffers[MaxVertexBufferCount];
-			IndexBufferDX11				indexBuffers[MaxIndexBufferCount];
-
-			BufferDX11					constantBuffers[MaxConstantBufferCount];
-			RenderTargetDX11			renderTargets[MaxRenderTargetCount];
+			BufferDX11					buffers[MaxBufferCount];
 
 			TextureDX11					textures[MaxTextureCount];
 
@@ -491,8 +525,8 @@ namespace bamboo
 			VertexShaderDX11			vertexShaders[MaxVertexShaderCount];
 			PixelShaderDX11				pixelShaders[MaxPixelShaderCount];
 
-			RenderTargetHandle			defaultColorBuffer;
-			RenderTargetHandle			defaultDepthStencilBuffer;
+			TextureHandle				defaultColorBuffer;
+			TextureHandle				defaultDepthStencilBuffer;
 
 			PipelineStateHandle			internalState;
 
@@ -607,34 +641,34 @@ namespace bamboo
 				HRESULT hr = S_OK;
 
 				{
-					defaultColorBuffer.id = rtHandleAlloc.Alloc();
+					defaultColorBuffer.id = texHandleAlloc.Alloc();
 					if (0 != defaultColorBuffer.id)
 						return -1;
 
-					RenderTargetDX11& rt = renderTargets[defaultColorBuffer.id];
+					TextureDX11& rt = textures[defaultColorBuffer.id];
 
-					rt.Reset(PixelFormat::FORMAT_AUTO, width, height, false, false);
+					rt.Reset(TextureType::TEXTURE_2D, PixelFormat::FORMAT_AUTO, BINDING_RENDER_TARGET, width, height);
 
 					ID3D11Texture2D* backbufferTex = nullptr;
 					if (S_OK != (hr = swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backbufferTex)))
 					{
 						return -1;
 					}
-					if (S_OK != (hr = device->CreateRenderTargetView(backbufferTex, nullptr, &(rt.renderTargetView))))
+					if (S_OK != (hr = device->CreateRenderTargetView(backbufferTex, nullptr, &(rt.rtv))))
 					{
 						return -1;
 					}
-					backbufferTex->Release();
+					rt.texture = backbufferTex;
 				}
 
 				{
-					defaultDepthStencilBuffer.id = rtHandleAlloc.Alloc();
+					defaultDepthStencilBuffer.id = texHandleAlloc.Alloc();
 					if (1 != defaultDepthStencilBuffer.id)
 						return -1;
 
-					RenderTargetDX11& ds = renderTargets[defaultDepthStencilBuffer.id];
+					TextureDX11& ds = textures[defaultDepthStencilBuffer.id];
 
-					ds.Reset(PixelFormat::FORMAT_D24_UNORM_S8_UINT, width, height, true, true);
+					ds.Reset(TextureType::TEXTURE_2D, PixelFormat::FORMAT_D24_UNORM_S8_UINT, width, height);
 					ID3D11Texture2D* depthStencilTex = nullptr;
 					D3D11_TEXTURE2D_DESC depthDesc{ 0 };
 					depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
@@ -650,12 +684,11 @@ namespace bamboo
 						return -1;
 					}
 
-					if (S_OK != (hr = device->CreateDepthStencilView(depthStencilTex, nullptr, &(ds.depthStencilView))))
+					if (S_OK != (hr = device->CreateDepthStencilView(depthStencilTex, nullptr, &(ds.dsv))))
 					{
 						return -1;
 					}
-
-					depthStencilTex->Release();
+					ds.texture = depthStencilTex;
 				}
 
 				return 0;
@@ -712,8 +745,12 @@ namespace bamboo
 				// TODO internalState = state;
 			}
 
-			void BindResources(const DrawCall& drawcall)
+			bool BindResources(const DrawCall& drawcall)
 			{
+				// TODO
+				// prevent resources bind to be read and written simultaneously
+
+
 				// Input Assembly
 				if (drawcall.VertexBufferCount > 0)
 				{
@@ -725,12 +762,15 @@ namespace bamboo
 					{
 						uint16_t handle = drawcall.VertexBuffers[i].id;
 #if _DEBUG
-						if (!vbHandleAlloc.InUse(handle))
-							return;
+						if (!bufHandleAlloc.InUse(handle))
+							return false;
 #endif
+						auto& buf = buffers[handle];
+						if ((buf.bindFlags & BINDING_VERTEX_BUFFER) == 0)
+							return false;
 
-						vb[i] = vertexBuffers[handle].buffer;
-						strides[i] = vertexBuffers[handle].stride;
+						vb[i] = buf.buffer;
+						strides[i] = buf.stride;
 						offsets[i] = 0;
 					}
 
@@ -741,10 +781,14 @@ namespace bamboo
 				{
 					uint16_t handle = drawcall.IndexBuffer.id;
 #if _DEBUG
-					if (!ibHandleAlloc.InUse(handle))
-						return;
+					if (!bufHandleAlloc.InUse(handle))
+						return false;
 #endif
-					context->IASetIndexBuffer(indexBuffers[handle].buffer, indexBuffers[handle].type, 0);
+					auto& buf = buffers[handle];
+					if ((buf.bindFlags & BINDING_INDEX_BUFFER) == 0)
+						return false;
+
+					context->IASetIndexBuffer(buf.buffer, (buf.stride == 2 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT), 0);
 				}
 				/////
 
@@ -773,10 +817,14 @@ namespace bamboo
 					{
 						uint16_t handle = drawcall.ConstantBuffers[i].Handle.id;
 #if _DEBUG
-						if (!cbHandleAlloc.InUse(handle))
-							return;
+						if (!bufHandleAlloc.InUse(handle))
+							return false;
 #endif
-						ID3D11Buffer* cb = constantBuffers[handle].buffer;
+						auto& buf = buffers[handle];
+						if ((buf.bindFlags & BINDING_CONSTANT_BUFFER) == 0)
+							return false;
+
+						ID3D11Buffer* cb = buf.buffer;
 
 						if (drawcall.ConstantBuffers[i].BindingVertexShader)
 						{
@@ -797,26 +845,43 @@ namespace bamboo
 
 				// Textures
 				{
-					ID3D11ShaderResourceView* vsSRVs[MaxTextureBindingSlot];
-					ID3D11ShaderResourceView* psSRVs[MaxTextureBindingSlot];
+					ID3D11ShaderResourceView* vsSRVs[MaxShaderResourceBindingSlot];
+					ID3D11ShaderResourceView* psSRVs[MaxShaderResourceBindingSlot];
 					UINT vsSRVCount = 0, psSRVCount = 0;
 
 					for (uint32_t i = 0; i < drawcall.TextureCount; ++i)
 					{
-						uint16_t handle = drawcall.Textures[i].Handle.id;
-#if _DEBUG
-						if (!texHandleAlloc.InUse(handle))
-							return;
-#endif
-						ID3D11ShaderResourceView* srv = textures[handle].srv;
+						ID3D11ShaderResourceView* srv = nullptr;
 
-						if (drawcall.Textures[i].BindingVertexShader)
+						if (drawcall.ShaderResources[i].IsBuffer)
+						{
+							uint16_t handle = drawcall.ShaderResources[i].Buffer.id;
+#if _DEBUG
+							if (!bufHandleAlloc.InUse(handle))
+								return false;
+#endif
+							srv = buffers[handle].srv;
+						}
+						else
+						{
+							uint16_t handle = drawcall.ShaderResources[i].Texture.id;
+#if _DEBUG
+							if (!texHandleAlloc.InUse(handle))
+								return false;
+#endif
+							srv = textures[handle].srv;
+						}
+
+						if (nullptr == srv)
+							return false;
+
+						if (drawcall.ShaderResources[i].BindingVertexShader)
 						{
 							vsSRVs[vsSRVCount] = srv;
 							vsSRVCount++;
 						}
 
-						if (drawcall.Textures[i].BindingPixelShader)
+						if (drawcall.ShaderResources[i].BindingPixelShader)
 						{
 							psSRVs[psSRVCount] = srv;
 							psSRVCount++;
@@ -838,17 +903,17 @@ namespace bamboo
 						uint16_t handle = drawcall.Samplers[i].Handle.id;
 #if _DEBUG
 						if (!sampHandleAlloc.InUse(handle))
-							return;
+							return false;
 #endif
 						ID3D11SamplerState* samp = samplers[handle].sampler;
 
-						if (drawcall.Textures[i].BindingVertexShader)
+						if (drawcall.ShaderResources[i].BindingVertexShader)
 						{
 							vsSamps[vsSampCount] = samp;
 							vsSampCount++;
 						}
 
-						if (drawcall.Textures[i].BindingPixelShader)
+						if (drawcall.ShaderResources[i].BindingPixelShader)
 						{
 							psSamps[psSampCount] = samp;
 							psSampCount++;
@@ -869,39 +934,41 @@ namespace bamboo
 					{
 						uint16_t handle = drawcall.RenderTargets[i].id;
 #if _DEBUG
-						if (!rtHandleAlloc.InUse(handle))
-							return;
+						if (!texHandleAlloc.InUse(handle))
+							return false;
 #endif
-						auto rt = renderTargets[handle];
-						if (rt.isDepth)
-							return;
+						auto& tex = textures[handle];
+						if (nullptr == tex.rtv)
+							return false;
 
-						rtvs[i] = rt.renderTargetView;
+						rtvs[i] = tex.rtv;
 					}
 
 					if (drawcall.HasDepthStencil)
 					{
 						uint16_t handle = drawcall.DepthStencil.id;
 #if _DEBUG
-						if (!rtHandleAlloc.InUse(handle))
-							return;
+						if (!texHandleAlloc.InUse(handle))
+							return false;
 #endif
-						auto rt = renderTargets[handle];
-						if (!rt.isDepth)
-							return;
+						auto& tex = textures[handle];
+						if (nullptr == tex.dsv)
+							return false;
 
-						dsv = rt.depthStencilView;
+						dsv = tex.dsv;
 					}
 
 					context->OMSetRenderTargets(drawcall.RenderTargetCount, rtvs, dsv);
 				}
 				else
 				{
-					ID3D11RenderTargetView* rtv = renderTargets[defaultColorBuffer.id].renderTargetView;
-					ID3D11DepthStencilView* dsv = renderTargets[defaultDepthStencilBuffer.id].depthStencilView;
+					ID3D11RenderTargetView* rtv = textures[defaultColorBuffer.id].rtv;
+					ID3D11DepthStencilView* dsv = textures[defaultDepthStencilBuffer.id].dsv;
 					context->OMSetRenderTargets(1, &rtv, dsv);
 				}
 				//
+
+				return true;
 			}
 
 			// interface implementation
@@ -942,187 +1009,42 @@ namespace bamboo
 				psoHandleAlloc.Free(handle.id);
 			}
 
-			VertexBufferHandle GraphicsAPIDX11::CreateVertexBuffer(size_t size, bool dynamic) override
+			BufferHandle GraphicsAPIDX11::CreateBuffer(size_t size, uint32_t bindingFlags, bool dynamic) override
 			{
-				uint16_t handle = vbHandleAlloc.Alloc();
+				uint16_t handle = bufHandleAlloc.Alloc();
 
 				if (handle != invalid_handle)
 				{
-					GeometryBufferDX11& vb = vertexBuffers[handle];
-					vb.Reset(static_cast<UINT>(size), D3D11_BIND_VERTEX_BUFFER, dynamic);
+					BufferDX11& vb = buffers[handle];
+					vb.Reset(static_cast<UINT>(size), bindingFlags, dynamic);
 				}
 
-				return VertexBufferHandle{ handle };
+				return BufferHandle{ handle };
 			}
 
-			void DestroyVertexBuffer(VertexBufferHandle handle) override
+			void DestroyBuffer(BufferHandle handle) override
 			{
-				if (!vbHandleAlloc.InUse(handle.id)) return;
-				GeometryBufferDX11& vb = vertexBuffers[handle.id];
-				vb.Release();
-				vbHandleAlloc.Free(handle.id);
+				if (!bufHandleAlloc.InUse(handle.id)) return;
+				BufferDX11& buf = buffers[handle.id];
+				buf.Release();
+				bufHandleAlloc.Free(handle.id);
 			}
 
-			void UpdateVertexBuffer(VertexBufferHandle handle, size_t size, const void* data, size_t stride) override
+			void UpdateBuffer(BufferHandle handle, size_t size, const void* data, size_t stride) override
 			{
-				if (!vbHandleAlloc.InUse(handle.id)) return;
-				GeometryBufferDX11& vb = vertexBuffers[handle.id];
-				vb.Update(device, context, static_cast<UINT>(size), data);
-				vb.stride = static_cast<UINT>(stride);
+				if (!bufHandleAlloc.InUse(handle.id)) return;
+				BufferDX11& vb = buffers[handle.id];
+				vb.Update(device, context, static_cast<UINT>(size), data, static_cast<UINT>(stride));
 			}
 
-			IndexBufferHandle GraphicsAPIDX11::CreateIndexBuffer(size_t size, bool dynamic) override
-			{
-				uint16_t handle = ibHandleAlloc.Alloc();
-
-				if (handle != invalid_handle)
-				{
-					IndexBufferDX11& ib = indexBuffers[handle];
-					ib.Reset(static_cast<UINT>(size), D3D11_BIND_INDEX_BUFFER, dynamic);
-				}
-
-				return IndexBufferHandle{ handle };
-			}
-
-			void DestroyIndexBuffer(IndexBufferHandle handle) override
-			{
-				if (!ibHandleAlloc.InUse(handle.id)) return;
-				IndexBufferDX11& ib = indexBuffers[handle.id];
-				ib.Release();
-				ibHandleAlloc.Free(handle.id);
-			}
-
-			void UpdateIndexBuffer(IndexBufferHandle handle, size_t size, const void* data, DataType type) override
-			{
-				if (!ibHandleAlloc.InUse(handle.id) || (type != TYPE_UINT16 && type != TYPE_UINT32)) return;
-				IndexBufferDX11& ib = indexBuffers[handle.id];
-				ib.Update(device, context, static_cast<UINT>(size), data);
-				ib.type = IndexTypeTable[type];
-			}
-
-			ConstantBufferHandle CreateConstantBuffer(size_t size) override
-			{
-				uint16_t handle = cbHandleAlloc.Alloc();
-
-				if (handle != invalid_handle)
-				{
-					BufferDX11& cb = constantBuffers[handle];
-					cb.Reset(static_cast<UINT>(size), D3D11_BIND_CONSTANT_BUFFER, true);
-				}
-
-				return ConstantBufferHandle{ handle };
-			}
-
-			void DestroyConstantBuffer(ConstantBufferHandle handle) override
-			{
-				if (!cbHandleAlloc.InUse(handle.id)) return;
-				BufferDX11& cb = constantBuffers[handle.id];
-				cb.Release();
-				cbHandleAlloc.Free(handle.id);
-			}
-
-			void UpdateConstantBuffer(ConstantBufferHandle handle, size_t size, const void* data) override
-			{
-				if (!cbHandleAlloc.InUse(handle.id)) return;
-				BufferDX11& cb = constantBuffers[handle.id];
-				cb.Update(device, context, static_cast<UINT>(size), data);
-			}
-
-			RenderTargetHandle CreateRenderTarget(PixelFormat format, uint32_t width, uint32_t height, bool isDepth, bool hasStencil) override
-			{
-				uint16_t handle = rtHandleAlloc.Alloc();
-
-				if (handle != invalid_handle)
-				{
-					RenderTargetDX11& rt = renderTargets[handle];
-					rt.Reset(format, width, height, isDepth, hasStencil);
-
-					ID3D11Texture2D* tex = nullptr;
-
-					D3D11_TEXTURE2D_DESC desc{ 0 };
-					desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
-					desc.Width = width;
-					desc.Height = height;
-					desc.ArraySize = 1;
-					desc.BindFlags = isDepth ? D3D11_BIND_DEPTH_STENCIL : D3D11_BIND_RENDER_TARGET;
-					desc.MipLevels = 1;
-					desc.SampleDesc.Count = 1;
-					desc.SampleDesc.Quality = 0;
-
-					if (FAILED(device->CreateTexture2D(&desc, nullptr, &tex)))
-					{
-						rtHandleAlloc.Free(handle);
-						return RenderTargetHandle{ invalid_handle };
-					}
-
-					if (isDepth)
-					{
-						if (FAILED(device->CreateDepthStencilView(tex, nullptr, &(rt.depthStencilView))))
-						{
-							rtHandleAlloc.Free(handle);
-							tex->Release();
-							return RenderTargetHandle{ invalid_handle };
-						}
-					}
-					else
-					{
-						if (FAILED(device->CreateRenderTargetView(tex, nullptr, &(rt.renderTargetView))))
-						{
-							rtHandleAlloc.Free(handle);
-							tex->Release();
-							return RenderTargetHandle{ invalid_handle };
-						}
-					}
-
-					tex->Release();
-				}
-
-				return RenderTargetHandle{ handle };
-			}
-
-			void DestroyRenderTarget(RenderTargetHandle handle) override
-			{
-				if (!rtHandleAlloc.InUse(handle.id)) return;
-				RenderTargetDX11& rt = renderTargets[handle.id];
-				rt.Release();
-				rtHandleAlloc.Free(handle.id);
-			}
-
-			void Clear(RenderTargetHandle handle, float color[4]) override
-			{
-				if (!rtHandleAlloc.InUse(handle.id))
-					handle = defaultColorBuffer; // TODO another way to create swap chain buffer
-				RenderTargetDX11& rt = renderTargets[handle.id];
-				if (rt.isDepth) return;
-				context->ClearRenderTargetView(rt.renderTargetView, color);
-			}
-
-			void ClearDepth(RenderTargetHandle handle, float depth) override
-			{
-				if (!rtHandleAlloc.InUse(handle.id))
-					handle = defaultDepthStencilBuffer; // TODO another way to create swap chain buffer
-				RenderTargetDX11& rt = renderTargets[handle.id];
-				if (!rt.isDepth) return;
-				context->ClearDepthStencilView(rt.depthStencilView, D3D11_CLEAR_DEPTH, depth, 0);
-			}
-
-			void ClearDepthStencil(RenderTargetHandle handle, float depth, uint8_t stencil) override
-			{
-				if (!rtHandleAlloc.InUse(handle.id))
-					handle = defaultDepthStencilBuffer; // TODO another way to create swap chain buffer
-				RenderTargetDX11& rt = renderTargets[handle.id];
-				if (!rt.isDepth || !rt.hasStencil) return;
-				context->ClearDepthStencilView(rt.depthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, depth, stencil);
-			}
-
-			TextureHandle CreateTexture(PixelFormat format, uint32_t width, uint32_t height, bool dynamic) override
+			TextureHandle CreateTexture(TextureType type, PixelFormat format, uint32_t bindFlags, uint32_t width, uint32_t height, uint32_t depth, uint32_t arraySize, uint32_t mipLevels, bool dynamic) override
 			{
 				uint16_t handle = texHandleAlloc.Alloc();
 
 				if (handle != invalid_handle)
 				{
 					TextureDX11& tex = textures[handle];
-					tex.Reset(format, width, height, dynamic);
+					tex.Reset(type, format, bindFlags, width, height, depth, arraySize, mipLevels, dynamic);
 				}
 
 				return TextureHandle{ handle };
@@ -1135,11 +1057,8 @@ namespace bamboo
 				if (handle != invalid_handle)
 				{
 					TextureDX11& tex = textures[handle];
-					PixelFormat format = PixelFormat::FORMAT_AUTO;
-					uint32_t width, height;
 
 					ID3D11Resource* res;
-					ID3D11Texture2D* tex2d;
 					ID3D11ShaderResourceView* srv;
 
 					size_t fnLen = wcslen(filename);
@@ -1160,44 +1079,114 @@ namespace bamboo
 						return TextureHandle{ invalid_handle };
 					}
 
-					if (FAILED(res->QueryInterface(IID_PPV_ARGS(&tex2d))))
+
 					{
-						res->Release();
-						srv->Release();
+						D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+						srv->GetDesc(&srvDesc);
 
-						texHandleAlloc.Free(handle);
-						return TextureHandle{ invalid_handle };
-					}
-
-					res->Release();
-
-					D3D11_TEXTURE2D_DESC desc = {};
-					tex2d->GetDesc(&desc);
-
-					for (unsigned i = PixelFormat::FORMAT_AUTO; i < PixelFormat::NUM_PIXEL_FORMAT; ++i)
-					{
-						if (TextureFormatTable[i] == desc.Format)
+						PixelFormat format = PixelFormatFromDXGI(srvDesc.Format);
+						if (format == FORMAT_AUTO)
 						{
-							format = static_cast<PixelFormat>(i);
-							break;
+							RELEASE(res);
+							RELEASE(srv);
+							texHandleAlloc.Free(handle);
+							return TextureHandle{ invalid_handle };
 						}
+
+						switch (srvDesc.ViewDimension)
+						{
+						case D3D11_SRV_DIMENSION_TEXTURE1D:
+						case D3D11_SRV_DIMENSION_TEXTURE1DARRAY:
+						{
+							D3D11_TEXTURE1D_DESC texDesc = {};
+							ID3D11Texture1D* tex1d = nullptr;
+							if (FAILED(res->QueryInterface(&tex1d)))
+							{
+								RELEASE(res);
+								RELEASE(srv);
+								texHandleAlloc.Free(handle);
+								return TextureHandle{ invalid_handle };
+							}
+							tex1d->GetDesc(&texDesc);
+							tex1d->Release();
+							tex.Reset(
+								TEXTURE_1D, 
+								format,
+								BINDING_SHADER_RESOURCE, 
+								texDesc.Width, 
+								1, 
+								1, 
+								texDesc.ArraySize, 
+								texDesc.MipLevels
+							);
+						}
+						break;
+						case D3D11_SRV_DIMENSION_TEXTURE2D:
+						case D3D11_SRV_DIMENSION_TEXTURE2DARRAY:
+						case D3D11_SRV_DIMENSION_TEXTURE2DMS:
+						case D3D11_SRV_DIMENSION_TEXTURE2DMSARRAY:
+						case D3D11_SRV_DIMENSION_TEXTURECUBE:
+						case D3D11_SRV_DIMENSION_TEXTURECUBEARRAY:
+						{
+							D3D11_TEXTURE2D_DESC texDesc = {};
+							ID3D11Texture2D* tex2d = nullptr;
+							if (FAILED(res->QueryInterface(&tex2d)))
+							{
+								RELEASE(res);
+								RELEASE(srv);
+								texHandleAlloc.Free(handle);
+								return TextureHandle{ invalid_handle };
+							}
+							tex2d->GetDesc(&texDesc);
+							tex2d->Release();
+							tex.Reset(
+								((srvDesc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURECUBE) ||
+									(srvDesc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURECUBE) ? TEXTURE_CUBE : TEXTURE_2D),
+								format,
+								BINDING_SHADER_RESOURCE,
+								texDesc.Width,
+								texDesc.Height,
+								1,
+								texDesc.ArraySize,
+								texDesc.MipLevels
+							);
+						}
+						break;
+						case D3D11_SRV_DIMENSION_TEXTURE3D:
+						{
+							D3D11_TEXTURE3D_DESC texDesc = {};
+							ID3D11Texture3D* tex3d = nullptr;
+							if (FAILED(res->QueryInterface(&tex3d)))
+							{
+								RELEASE(res);
+								RELEASE(srv);
+								texHandleAlloc.Free(handle);
+								return TextureHandle{ invalid_handle };
+							}
+							tex3d->GetDesc(&texDesc);
+							tex3d->Release();
+							tex.Reset(
+								TEXTURE_3D,
+								format,
+								BINDING_SHADER_RESOURCE,
+								texDesc.Width,
+								texDesc.Height,
+								texDesc.Depth,
+								1,
+								texDesc.MipLevels
+							);
+						}
+						break;
+						default:
+							RELEASE(res);
+							RELEASE(srv);
+							texHandleAlloc.Free(handle);
+							return TextureHandle{ invalid_handle };
+						}
+
+						tex.texture = res;
+						tex.srv = srv;
 					}
-
-					if (PixelFormat::FORMAT_AUTO == format)
-					{
-						tex2d->Release();
-						srv->Release();
-
-						texHandleAlloc.Free(handle);
-						return TextureHandle{ invalid_handle };
-					}
-
-					width = static_cast<uint32_t>(desc.Width);
-					height = static_cast<uint32_t>(desc.Height);
-
-					tex.Reset(format, width, height, false);
-					tex.texture = tex2d;
-					tex.srv = srv;
 				}
 
 				return TextureHandle{ handle };
@@ -1216,6 +1205,34 @@ namespace bamboo
 				if (!texHandleAlloc.InUse(handle.id)) return;
 				TextureDX11& tex = textures[handle.id];
 				tex.Update(device, context, static_cast<UINT>(pitch), data);
+			}
+
+
+			void Clear(TextureHandle handle, float color[4]) override
+			{
+				if (!texHandleAlloc.InUse(handle.id))
+					handle = defaultColorBuffer; // TODO another way to create swap chain buffer
+				TextureDX11& tex = textures[handle.id];
+				if (nullptr == tex.rtv) return;
+				context->ClearRenderTargetView(tex.rtv, color);
+			}
+
+			void ClearDepth(TextureHandle handle, float depth) override
+			{
+				if (!texHandleAlloc.InUse(handle.id))
+					handle = defaultDepthStencilBuffer; // TODO another way to create swap chain buffer
+				TextureDX11& tex = textures[handle.id];
+				if (nullptr == tex.dsv) return;
+				context->ClearDepthStencilView(tex.dsv, D3D11_CLEAR_DEPTH, depth, 0);
+			}
+
+			void ClearDepthStencil(TextureHandle handle, float depth, uint8_t stencil) override
+			{
+				if (!texHandleAlloc.InUse(handle.id))
+					handle = defaultDepthStencilBuffer; // TODO another way to create swap chain buffer
+				TextureDX11& tex = textures[handle.id];
+				if (nullptr == tex.dsv || tex.format != FORMAT_D24_UNORM_S8_UINT) return;
+				context->ClearDepthStencilView(tex.dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, depth, stencil);
 			}
 
 			SamplerHandle CreateSampler() override
@@ -1338,13 +1355,9 @@ namespace bamboo
 #define CLEAR_ARRAY(arr, count, alloc) \
 				for (uint16_t handle = 0; handle < count; ++handle) \
 					if (alloc.InUse(handle)) arr[handle].Release();
-
-				// vertex layout is not d3d resource here
+				 
 				CLEAR_ARRAY(pipelineStates, MaxPipelineStateCount, psoHandleAlloc);
-				CLEAR_ARRAY(vertexBuffers, MaxVertexBufferCount, vbHandleAlloc);
-				CLEAR_ARRAY(indexBuffers, MaxIndexBufferCount, ibHandleAlloc);
-				CLEAR_ARRAY(constantBuffers, MaxConstantBufferCount, cbHandleAlloc);
-				CLEAR_ARRAY(renderTargets, MaxRenderTargetCount, rtHandleAlloc);
+				CLEAR_ARRAY(buffers, MaxBufferCount, bufHandleAlloc);
 				CLEAR_ARRAY(textures, MaxTextureCount, texHandleAlloc);
 				CLEAR_ARRAY(samplers, MaxSamplerCount, sampHandleAlloc);
 				CLEAR_ARRAY(vertexShaders, MaxVertexShaderCount, vsHandleAlloc);

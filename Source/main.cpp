@@ -118,11 +118,11 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	Memory vertices(assimp.GetVerticesCount() * AssimpLoader::VertexSize);
 	assimp.FillInVerticesData(vertices.ptr);
 
-	auto vb = api->CreateVertexBuffer(vertices.size, false);
-	api->UpdateVertexBuffer(vb, vertices.size, reinterpret_cast<void*>(vertices.ptr), AssimpLoader::VertexSize);
+	auto vb = api->CreateBuffer(vertices.size, bamboo::BINDING_VERTEX_BUFFER, false);
+	api->UpdateBuffer(vb, vertices.size, reinterpret_cast<void*>(vertices.ptr), AssimpLoader::VertexSize);
 
-	auto ib = api->CreateIndexBuffer(assimp.GetIndicesCount() * sizeof(unsigned int), false);
-	api->UpdateIndexBuffer(ib, assimp.GetIndicesCount() * sizeof(unsigned int), reinterpret_cast<const void*>(assimp.GetIndices()), bamboo::TYPE_UINT32);
+	auto ib = api->CreateBuffer(assimp.GetIndicesCount() * sizeof(unsigned int), bamboo::BINDING_INDEX_BUFFER, false);
+	api->UpdateBuffer(ib, assimp.GetIndicesCount() * sizeof(unsigned int), reinterpret_cast<const void*>(assimp.GetIndices()), sizeof(uint32_t));
 
 	auto vs_byte = LoadFile("Assets/Shaders/D3D11/vs_opaque.cso");
 	auto ps_byte = LoadFile("Assets/Shaders/D3D11/ps_opaque.cso");
@@ -178,16 +178,16 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		XMMatrixIdentity()
 	);
 
-	auto cb1 = api->CreateConstantBuffer(frameConstants.size);
-	api->UpdateConstantBuffer(cb1, frameConstants.size, frameConstants.ptr);
+	auto cb1 = api->CreateBuffer(frameConstants.size, bamboo::BINDING_CONSTANT_BUFFER);
+	api->UpdateBuffer(cb1, frameConstants.size, frameConstants.ptr);
 
-	auto cb2 = api->CreateConstantBuffer(instanceConstants.size);
-	api->UpdateConstantBuffer(cb2, instanceConstants.size, instanceConstants.ptr);
+	auto cb2 = api->CreateBuffer(instanceConstants.size, bamboo::BINDING_CONSTANT_BUFFER);
+	api->UpdateBuffer(cb2, instanceConstants.size, instanceConstants.ptr);
 
-	auto cb3 = api->CreateConstantBuffer(sizeof(DirectX::XMFLOAT4));
+	auto cb3 = api->CreateBuffer(sizeof(DirectX::XMFLOAT4), bamboo::BINDING_CONSTANT_BUFFER);
 	{
 		float camPos[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-		api->UpdateConstantBuffer(cb3, sizeof(DirectX::XMFLOAT4), camPos);
+		api->UpdateBuffer(cb3, sizeof(DirectX::XMFLOAT4), camPos);
 	}
 
 	auto cubeMap = api->CreateTexture(L"Assets/Textures/craterlake.dds");
@@ -222,9 +222,9 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	drawcall1.ConstantBuffers[2] = { cb3, { 0, 1, 0 } };
 
 	drawcall1.TextureCount = 3;
-	drawcall1.Textures[0] = { cubeMap, { 0, 1, 0 } };
-	drawcall1.Textures[1] = { diffuseTex, {0, 1, 0} };
-	drawcall1.Textures[2] = { normalMap, { 0, 1, 0 } };
+	drawcall1.ShaderResources[0] = { cubeMap, { 0, 1, 0 } };
+	drawcall1.ShaderResources[1] = { diffuseTex, {0, 1, 0} };
+	drawcall1.ShaderResources[2] = { normalMap, { 0, 1, 0 } };
 
 	drawcall1.SamplerCount = 1;
 	drawcall1.Samplers[0] = { sampler, {0, 1, 0} };
@@ -248,7 +248,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 
 	float clearColor[] = { 0.0f, 0.0f, 0.0f, 1.0f };
-	auto invalidRTHandle = bamboo::RenderTargetHandle{ bamboo::invalid_handle }; // TODO
+	auto invalidRTHandle = bamboo::TextureHandle{ bamboo::invalid_handle }; // TODO
 
 	float pitch = 0.0f, yaw = 0.0f;
 	timer.Start();
@@ -322,10 +322,10 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 			*reinterpret_cast<XMFLOAT4X4*>(frameConstants.ptr) = camera.GetViewMatrix();
 			*(reinterpret_cast<XMFLOAT4X4*>(frameConstants.ptr) + 1) = camera.GetProjectionMatrix();
 
-			api->UpdateConstantBuffer(cb1, frameConstants.size, frameConstants.ptr);
+			api->UpdateBuffer(cb1, frameConstants.size, frameConstants.ptr);
 
 			const DirectX::XMFLOAT3& camPos = camera.GetPosition();
-			api->UpdateConstantBuffer(cb3, sizeof(DirectX::XMFLOAT3), &camPos);
+			api->UpdateBuffer(cb3, sizeof(DirectX::XMFLOAT3), &camPos);
 		}
 
 		api->Clear(invalidRTHandle, clearColor);
