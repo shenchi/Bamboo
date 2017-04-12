@@ -12,6 +12,7 @@
 #pragma comment(lib, "d3d12.lib")
 
 #define RELEASE(x) if (nullptr != (x)) { (x)->Release(); (x) = nullptr; }
+#define FREE_HANDLE(h, a) if ((a).InUse(h)) { (a).Free(h); (h) = invalid_handle; }
 #define CE(x, e) if (S_OK != (x)) return (e);
 #define CHECKED(x) if (S_OK != (x)) return -1;
 
@@ -22,6 +23,107 @@ namespace bamboo
 		constexpr size_t RTVHeapSize = 1024;
 		constexpr size_t DSVHeapSize = 1024;
 		constexpr size_t SRVHeapSize = 1024;
+
+
+		DXGI_FORMAT InputSlotTypeTable[][4] =
+		{
+			// TYPE_FLOAT
+			{ DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R32G32_FLOAT, DXGI_FORMAT_R32G32B32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT },
+			// TYPE_INT8
+			{ DXGI_FORMAT_R8_SINT, DXGI_FORMAT_R8G8_SINT, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_R8G8B8A8_SINT },
+			// TYPE_UINT8
+			{ DXGI_FORMAT_R8_UINT, DXGI_FORMAT_R8G8_UINT, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_R8G8B8A8_UINT },
+			// TYPE_INT16
+			{ DXGI_FORMAT_R16_SINT, DXGI_FORMAT_R16G16_SINT, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_R16G16B16A16_SINT },
+			// TYPE_UINT16
+			{ DXGI_FORMAT_R16_UINT, DXGI_FORMAT_R16G16_UINT, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_R16G16B16A16_UINT },
+			// TYPE_INT32
+			{ DXGI_FORMAT_R32_SINT, DXGI_FORMAT_R32G32_SINT, DXGI_FORMAT_R32G32B32_SINT, DXGI_FORMAT_R32G32B32A32_SINT },
+			// TYPE_UINT32
+			{ DXGI_FORMAT_R32_UINT, DXGI_FORMAT_R32G32_UINT, DXGI_FORMAT_R32G32B32_UINT, DXGI_FORMAT_R32G32B32A32_UINT },
+		};
+
+		size_t InputSlotSizeTable[] =
+		{
+			4, // TYPE_FLOAT
+			1, // TYPE_INT8
+			1, // TYPE_UINT8
+			2, // TYPE_INT16
+			2, // TYPE_UINT16
+			4, // TYPE_INT32
+			4, // TYPE_UINT32
+		};
+
+		DXGI_FORMAT IndexTypeTable[] =
+		{
+			DXGI_FORMAT_UNKNOWN, // TYPE_FLOAT
+			DXGI_FORMAT_UNKNOWN, // TYPE_INT8
+			DXGI_FORMAT_UNKNOWN, // TYPE_UINT8
+			DXGI_FORMAT_UNKNOWN, // TYPE_INT16
+			DXGI_FORMAT_R16_UINT, // TYPE_UINT16
+			DXGI_FORMAT_UNKNOWN, // TYPE_INT32
+			DXGI_FORMAT_R32_UINT, // TYPE_UINT32
+		};
+
+		LPSTR InputSemanticsTable[] =
+		{
+			"POSITION",
+			"COLOR",
+			"NORMAL",
+			"TANGENT",
+			"BINORMAL",
+			"TEXCOORD",
+			"TEXCOORD",
+			"TEXCOORD",
+			"TEXCOORD",
+		};
+
+		UINT InputSemanticsIndex[] =
+		{
+			0,
+			0,
+			0,
+			0,
+			0,
+			0,
+			1,
+			2,
+			3,
+		};
+
+		/*D3D11_PRIMITIVE_TOPOLOGY PrimitiveTypeTable[] =
+		{
+			D3D11_PRIMITIVE_TOPOLOGY_POINTLIST,
+			D3D11_PRIMITIVE_TOPOLOGY_LINELIST,
+			D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+		};*/
+
+		DXGI_FORMAT TextureFormatTable[] =
+		{
+			DXGI_FORMAT_R32G32B32A32_FLOAT, // AUTO
+			DXGI_FORMAT_R8G8B8A8_UNORM,
+			DXGI_FORMAT_R8G8B8A8_SNORM,
+			DXGI_FORMAT_R16G16B16A16_UNORM,
+			DXGI_FORMAT_R16G16B16A16_SNORM,
+			DXGI_FORMAT_R32G32B32A32_FLOAT,
+			DXGI_FORMAT_R16_SINT,
+			DXGI_FORMAT_R32_SINT,
+			DXGI_FORMAT_R16_UINT,
+			DXGI_FORMAT_R32_UINT,
+			DXGI_FORMAT_D24_UNORM_S8_UINT,
+		};
+
+		PixelFormat PixelFormatFromDXGI(DXGI_FORMAT format)
+		{
+			for (unsigned i = PixelFormat::FORMAT_AUTO; i < PixelFormat::NUM_PIXEL_FORMAT; ++i)
+			{
+				if (TextureFormatTable[i] == format)
+				{
+					return static_cast<PixelFormat>(i);
+				}
+			}
+			return FORMAT_AUTO;
+		}
 
 		struct PipelineStateDX12
 		{
@@ -249,8 +351,15 @@ namespace bamboo
 
 
 #pragma region resource creation
+			void ResetTexture(TextureDX12& tex)
+			{
+				RELEASE(tex.texture);
+				FREE_HANDLE(tex.srv, srvHeapAlloc);
+				FREE_HANDLE(tex.rtv, rtvHeapAlloc);
+				FREE_HANDLE(tex.dsv, dsvHeapAlloc);
+			}
 
-			uint16_t CreateTexture(TextureType type, PixelFormat format, uint32_t bindFlags)
+			uint16_t CreateTexture(TextureType type, PixelFormat format, uint32_t bindFlags, uint32_t width, uint32_t height, uint32_t depth, uint32_t arraySize, uint32_t mipLevels)
 			{
 				uint16_t handle = texHandleAlloc.Alloc();
 				if (invalid_handle == handle)
@@ -258,9 +367,108 @@ namespace bamboo
 
 				TextureDX12& tex = textures[handle];
 
-				//CD3DX12_HEAP_PROPERTIES heap = 
+				CD3DX12_HEAP_PROPERTIES heapProp(D3D12_HEAP_TYPE_DEFAULT);
+				
+				D3D12_RESOURCE_FLAGS resFlag = D3D12_RESOURCE_FLAG_NONE;
+				if (!(bindFlags & BINDING_SHADER_RESOURCE))
+				{
+					tex.srv = invalid_handle;
+					resFlag |= D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;
+				}
+				else
+				{
+					tex.srv = srvHeapAlloc.Alloc();
+					if (invalid_handle == tex.srv)
+					{
+						ResetTexture(tex);
+						texHandleAlloc.Free(handle);
+						return invalid_handle;
+					}
+				}
+				if (bindFlags & BINDING_RENDER_TARGET)
+				{
+					resFlag |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+					tex.rtv = srvHeapAlloc.Alloc();
+					if (invalid_handle == tex.rtv)
+					{
+						ResetTexture(tex);
+						texHandleAlloc.Free(handle);
+						return invalid_handle;
+					}
+				}
+				else
+				{
+					tex.rtv = invalid_handle;
+				}
+				if (bindFlags & BINDING_DEPTH_STENCIL)
+				{
+					resFlag |= D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+					tex.dsv = dsvHeapAlloc.Alloc();
+					if (invalid_handle == tex.dsv)
+					{
+						ResetTexture(tex);
+						texHandleAlloc.Free(handle);
+						return invalid_handle;
+					}
+				}
+				else
+				{
+					tex.dsv = invalid_handle;
+				}
 
-				//device->CreateCommittedResource()
+				CD3DX12_RESOURCE_DESC resDesc;
+
+				if (type == TEXTURE_1D)
+				{
+					resDesc = CD3DX12_RESOURCE_DESC::Tex1D(
+						TextureFormatTable[format],
+						width,
+						arraySize,
+						mipLevels,
+						resFlag
+					);
+				}
+				else if (type == TEXTURE_2D || type == TEXTURE_CUBE)
+				{
+					resDesc = CD3DX12_RESOURCE_DESC::Tex2D(
+						TextureFormatTable[format],
+						width, height,
+						(type == TEXTURE_CUBE ? arraySize * 6 : arraySize),
+						mipLevels,
+						1, 0,
+						resFlag
+					);
+				}
+				else if (type == TEXTURE_3D)
+				{
+					resDesc = CD3DX12_RESOURCE_DESC::Tex3D(
+						TextureFormatTable[format],
+						width, height, depth,
+						mipLevels,
+						resFlag
+					);
+				}
+
+				if (FAILED(device->CreateCommittedResource(&heapProp,
+					D3D12_HEAP_FLAG_DENY_BUFFERS,
+					&resDesc,
+					D3D12_RESOURCE_STATE_COPY_DEST,
+					nullptr,
+					IID_PPV_ARGS(&tex.texture))))
+				{
+
+					ResetTexture(tex);
+					texHandleAlloc.Free(handle);
+					return invalid_handle;
+				}
+
+				if (invalid_handle != tex.srv)
+				{
+					D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
+					// MARK
+					CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(srvHeap->GetCPUDescriptorHandleForHeapStart(), tex.srv, srvHeapInc);
+					device->CreateShaderResourceView(tex.texture, &desc, srvHandle);
+				}
 
 				return handle;
 			}
