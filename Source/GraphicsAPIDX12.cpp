@@ -132,6 +132,13 @@ namespace bamboo
 
 		};
 
+		struct BufferDX12
+		{
+			ID3D12Resource*				buffer;
+			uint16_t					srv;
+			//D3D12_RESOURCE_
+		};
+
 		struct TextureDX12
 		{
 			ID3D12Resource*				texture;
@@ -193,7 +200,7 @@ namespace bamboo
 
 				int result = 0;
 
-				if (0 != (result = CreateDevice()))
+				if (0 != (result = InitDirect3D()))
 					return result;
 
 				if (0 != (result = InitRenderTargets()))
@@ -209,7 +216,7 @@ namespace bamboo
 				return 0;
 			}
 
-			int CreateDevice()
+			int InitDirect3D()
 			{
 				UINT dxgi_flag = 0;
 				IDXGIFactory5* factory = nullptr;
@@ -364,8 +371,10 @@ namespace bamboo
 
 			}
 
-
 #pragma region resource creation
+
+
+
 			void InternalResetTexture(TextureDX12& tex)
 			{
 				RELEASE(tex.texture);
@@ -712,38 +721,135 @@ namespace bamboo
 			// Textures
 			TextureHandle CreateTexture(TextureType type, PixelFormat format, uint32_t bindFlags, uint32_t width, uint32_t height = 1, uint32_t depth = 1, uint32_t arraySize = 1, uint32_t mipLevels = 1, bool dynamic = false) override
 			{
-				return TextureHandle{ invalid_handle };
+				return TextureHandle{
+					InternalCreateTexture(
+						type, 
+						format, 
+						bindFlags, 
+						width, 
+						height, 
+						depth, 
+						arraySize, 
+						mipLevels)
+				};
 			}
 
 			TextureHandle CreateTexture(const wchar_t* filename) override
 			{
-				return TextureHandle{ invalid_handle };
+				return TextureHandle{ 
+					InternalCreateTexture(filename)
+				};
 			}
 
 			void DestroyTexture(TextureHandle handle) override
 			{
-
+				InternalDestroyTexture(handle.id);
 			}
 
 			void UpdateTexture(TextureHandle handle, size_t pitch, const void* data) override
 			{
-
+				InternalUpdateTexture(handle.id, data, static_cast<uint32_t>(pitch));
 			}
 
 
 			void Clear(TextureHandle handle, float color[4]) override
 			{
+				if (handle.id == invalid_handle)
+					handle.id = 0; // TODO current back buffer index
+				if (!texHandleAlloc.InUse(handle.id))
+					return;
 
+				TextureDX12& tex = textures[handle.id];
+
+				if (invalid_handle == tex.rtv)
+					return;
+
+				if (tex.state != D3D12_RESOURCE_STATE_RENDER_TARGET)
+				{
+					cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+						tex.texture,
+						tex.state,
+						D3D12_RESOURCE_STATE_RENDER_TARGET
+					));
+
+					tex.state = D3D12_RESOURCE_STATE_RENDER_TARGET;
+				}
+
+				CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(
+					rtvHeap->GetCPUDescriptorHandleForHeapStart(),
+					tex.rtv,
+					rtvHeapInc);
+
+				cmdList->ClearRenderTargetView(rtvHandle, color, 0, nullptr);
 			}
 
 			void ClearDepth(TextureHandle handle, float depth) override
 			{
+				if (handle.id == invalid_handle)
+					handle.id = 0; // TODO default depth buffer index
+				if (!texHandleAlloc.InUse(handle.id))
+					return;
 
+				TextureDX12& tex = textures[handle.id];
+
+				if (invalid_handle == tex.dsv)
+					return;
+
+				if (tex.state != D3D12_RESOURCE_STATE_DEPTH_WRITE)
+				{
+					cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+						tex.texture,
+						tex.state,
+						D3D12_RESOURCE_STATE_DEPTH_WRITE
+					));
+
+					tex.state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+				}
+
+				CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(
+					dsvHeap->GetCPUDescriptorHandleForHeapStart(),
+					tex.dsv,
+					dsvHeapInc);
+
+				cmdList->ClearDepthStencilView(
+					dsvHandle, 
+					D3D12_CLEAR_FLAG_DEPTH, 
+					depth, 
+					0, 0, nullptr);
 			}
 
 			void ClearDepthStencil(TextureHandle handle, float depth, uint8_t stencil) override
 			{
+				if (handle.id == invalid_handle)
+					handle.id = 0; // TODO default depth buffer index
+				if (!texHandleAlloc.InUse(handle.id))
+					return;
 
+				TextureDX12& tex = textures[handle.id];
+
+				if (invalid_handle == tex.dsv)
+					return;
+
+				if (tex.state != D3D12_RESOURCE_STATE_DEPTH_WRITE)
+				{
+					cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+						tex.texture,
+						tex.state,
+						D3D12_RESOURCE_STATE_DEPTH_WRITE
+					));
+
+					tex.state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+				}
+
+				CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(
+					dsvHeap->GetCPUDescriptorHandleForHeapStart(),
+					tex.dsv,
+					dsvHeapInc);
+
+				cmdList->ClearDepthStencilView(
+					dsvHandle, 
+					D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 
+					depth, stencil, 0, nullptr);
 			}
 
 
@@ -800,7 +906,27 @@ namespace bamboo
 			// Clean up
 			void Shutdown() override
 			{
+#define CLEAR_ARRAY(arr, count, alloc, func) \
+				for (uint16_t handle = 0; handle < count; ++handle) \
+					if (alloc.InUse(handle)) func(arr[handle]);
 
+
+				CLEAR_ARRAY(textures, MaxTextureCount, texHandleAlloc, InternalResetTexture);
+
+#undef CLEAR_ARRAY
+
+				rtvHeap->Release();
+				dsvHeap->Release();
+				srvHeap->Release();
+
+				fence->Release();
+
+				cmdList->Release();
+				cmdAlloc->Release();
+
+				swapChain->Release();
+				cmdQueue->Release();
+				device->Release();
 			}
 
 #pragma endregion
