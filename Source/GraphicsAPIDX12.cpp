@@ -136,7 +136,21 @@ namespace bamboo
 		{
 			ID3D12Resource*				buffer;
 			uint16_t					srv;
-			//D3D12_RESOURCE_
+			D3D12_RESOURCE_STATES		state;
+
+			uint32_t					size;
+			uint32_t					stride;
+			PixelFormat					format;
+
+			BufferDX12()
+				:
+				buffer(nullptr),
+				srv(invalid_handle),
+				state(D3D12_RESOURCE_STATE_COMMON),
+				size(0),
+				stride(0),
+				format(FORMAT_AUTO)
+			{}
 		};
 
 		struct TextureDX12
@@ -154,6 +168,21 @@ namespace bamboo
 			uint32_t					depth;
 			uint32_t					arraySize;
 			uint32_t					mipLevels;
+
+			TextureDX12()
+				:
+				texture(nullptr),
+				srv(invalid_handle),
+				rtv(invalid_handle),
+				dsv(invalid_handle),
+				state(D3D12_RESOURCE_STATE_COMMON),
+				format(FORMAT_AUTO),
+				width(0),
+				height(0),
+				depth(0),
+				arraySize(0),
+				mipLevels(0)
+			{}
 		};
 
 		struct GraphicsAPIDX12 : public GraphicsAPI
@@ -190,6 +219,7 @@ namespace bamboo
 			UINT						dsvHeapInc;
 			UINT						srvHeapInc;
 
+			BufferDX12					buffers[MaxBufferCount];
 			TextureDX12					textures[MaxTextureCount];
 
 			UploadHeapDX12				uploadHeap;
@@ -373,7 +403,33 @@ namespace bamboo
 
 #pragma region resource creation
 
+			void InternalResetBuffer(BufferDX12& buf)
+			{
+				RELEASE(buf.buffer);
+				FREE_HANDLE(buf.srv, srvHeapAlloc);
+			}
 
+			uint16_t InternalCreateBuffer(uint32_t bindFlags, size_t size)
+			{
+				uint16_t handle = bufHandleAlloc.Alloc();
+				if (invalid_handle == handle)
+					return handle;
+
+				BufferDX12& buf = buffers[handle];
+
+				D3D12_RESOURCE_FLAGS resFlags = D3D12_RESOURCE_FLAG_NONE;
+				D3D12_HEAP_FLAGS heapFlags = D3D12_HEAP_FLAG_NONE;
+
+				
+				device->CreateCommittedResource(
+					&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+					heapFlags,
+					&CD3DX12_RESOURCE_DESC::Buffer(size, resFlags),
+					D3D12_RESOURCE_STATE_COPY_DEST,
+					nullptr,
+					IID_PPV_ARGS(&(buf.buffer))
+				);
+			}
 
 			void InternalResetTexture(TextureDX12& tex)
 			{
@@ -910,7 +966,7 @@ namespace bamboo
 				for (uint16_t handle = 0; handle < count; ++handle) \
 					if (alloc.InUse(handle)) func(arr[handle]);
 
-
+				CLEAR_ARRAY(buffers, MaxBufferCount, bufHandleAlloc, InternalResetBuffer);
 				CLEAR_ARRAY(textures, MaxTextureCount, texHandleAlloc, InternalResetTexture);
 
 #undef CLEAR_ARRAY
