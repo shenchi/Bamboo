@@ -11,6 +11,8 @@
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3d12.lib")
 
+#include "UploadHeapDX12.h"
+
 #define RELEASE(x) if (nullptr != (x)) { (x)->Release(); (x) = nullptr; }
 #define FREE_HANDLE(h, a) if ((a).InUse(h)) { (a).Free(h); (h) = invalid_handle; }
 #define CE(x, e) if (S_OK != (x)) return (e);
@@ -136,12 +138,14 @@ namespace bamboo
 			uint16_t					srv;
 			uint16_t					rtv;
 			uint16_t					dsv;
+			D3D12_RESOURCE_STATES		state;
 
 			TextureType					type;
 			PixelFormat					format;
 			uint32_t					width;
 			uint32_t					height;
-			uint32_t					depthOrArraySize;
+			uint32_t					depth;
+			uint32_t					arraySize;
 			uint32_t					mipLevels;
 		};
 
@@ -181,7 +185,7 @@ namespace bamboo
 
 			TextureDX12					textures[MaxTextureCount];
 
-
+			UploadHeapDX12				uploadHeap;
 
 			int Init(void* windowHandle)
 			{
@@ -196,6 +200,11 @@ namespace bamboo
 					return result;
 
 				InitPipelineStates();
+
+				if (!uploadHeap.Init(device))
+				{
+					return -1;
+				}
 
 				return 0;
 			}
@@ -272,6 +281,29 @@ namespace bamboo
 				factory->MakeWindowAssociation(hWnd, DXGI_MWA_NO_ALT_ENTER);
 				factory->Release();
 
+				{
+					D3D12_DESCRIPTOR_HEAP_DESC desc = {};
+					desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+					desc.NumDescriptors = RTVHeapSize;
+					CHECKED(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&rtvHeap)));
+					rtvHeapInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+				}
+
+				{
+					D3D12_DESCRIPTOR_HEAP_DESC desc = {};
+					desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+					desc.NumDescriptors = DSVHeapSize;
+					CHECKED(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&dsvHeap)));
+					dsvHeapInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+				}
+
+				{
+					D3D12_DESCRIPTOR_HEAP_DESC desc = {};
+					desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+					desc.NumDescriptors = SRVHeapSize;
+					CHECKED(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&srvHeap)));
+					srvHeapInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+				}
 
 				CHECKED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cmdAlloc)));
 
@@ -290,34 +322,17 @@ namespace bamboo
 			{
 				backBufferIndex = swapChain->GetCurrentBackBufferIndex();
 
+				for (UINT i = 0; i < 2; ++i)
 				{
-					D3D12_DESCRIPTOR_HEAP_DESC desc = {};
-					desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-					desc.NumDescriptors = RTVHeapSize;
-					CHECKED(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&rtvHeap)));
-					rtvHeapInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+					ID3D12Resource* res = nullptr;
+					CHECKED(swapChain->GetBuffer(i, IID_PPV_ARGS(&res)));
+					uint16_t handle = InternalCreateTexture(res, BINDING_RENDER_TARGET, D3D12_RESOURCE_STATE_RENDER_TARGET);
+					assert(handle == i);
 				}
 
 				{
-					auto handle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
+					ID3D12Resource* res = nullptr;
 
-					for (UINT i = 0; i < 2; ++i)
-					{
-						CHECKED(swapChain->GetBuffer(i, IID_PPV_ARGS(&backBuffers[i])));
-						device->CreateRenderTargetView(backBuffers[i], nullptr, handle);
-						handle.ptr += rtvHeapInc;
-					}
-				}
-
-				{
-					D3D12_DESCRIPTOR_HEAP_DESC desc = {};
-					desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
-					desc.NumDescriptors = DSVHeapSize;
-					CHECKED(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&dsvHeap)));
-					dsvHeapInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
-				}
-
-				{
 					D3D12_HEAP_PROPERTIES prop = {};
 					prop.Type = D3D12_HEAP_TYPE_DEFAULT;
 
@@ -336,9 +351,9 @@ namespace bamboo
 					clearValue[0].DepthStencil.Depth = 1.0f;
 					clearValue[0].DepthStencil.Stencil = 0;
 
-					CHECKED(device->CreateCommittedResource(&prop, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, clearValue, IID_PPV_ARGS(&depthBuffer)));
-
-					device->CreateDepthStencilView(depthBuffer, nullptr, dsvHeap->GetCPUDescriptorHandleForHeapStart());
+					CHECKED(device->CreateCommittedResource(&prop, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, clearValue, IID_PPV_ARGS(&res)));
+					uint16_t handle = InternalCreateTexture(res, BINDING_DEPTH_STENCIL, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+					assert(handle == 2);
 				}
 
 				return 0;
@@ -351,7 +366,7 @@ namespace bamboo
 
 
 #pragma region resource creation
-			void ResetTexture(TextureDX12& tex)
+			void InternalResetTexture(TextureDX12& tex)
 			{
 				RELEASE(tex.texture);
 				FREE_HANDLE(tex.srv, srvHeapAlloc);
@@ -359,7 +374,115 @@ namespace bamboo
 				FREE_HANDLE(tex.dsv, dsvHeapAlloc);
 			}
 
-			uint16_t CreateTexture(TextureType type, PixelFormat format, uint32_t bindFlags, uint32_t width, uint32_t height, uint32_t depth, uint32_t arraySize, uint32_t mipLevels)
+			uint16_t InternalCreateTexture(ID3D12Resource* res, uint32_t bindFlags, D3D12_RESOURCE_STATES initialState)
+			{
+				uint16_t handle = texHandleAlloc.Alloc();
+				if (invalid_handle == handle)
+					return handle;
+
+				TextureDX12& tex = textures[handle];
+				
+				tex.texture = res;
+				tex.state = initialState;
+
+				if ((bindFlags & BINDING_SHADER_RESOURCE))
+				{
+					tex.srv = srvHeapAlloc.Alloc();
+					if (invalid_handle == tex.srv)
+					{
+						InternalResetTexture(tex);
+						texHandleAlloc.Free(handle);
+						return invalid_handle;
+					}
+				}
+				if (bindFlags & BINDING_RENDER_TARGET)
+				{
+					tex.rtv = srvHeapAlloc.Alloc();
+					if (invalid_handle == tex.rtv)
+					{
+						InternalResetTexture(tex);
+						texHandleAlloc.Free(handle);
+						return invalid_handle;
+					}
+				}
+				if (bindFlags & BINDING_DEPTH_STENCIL)
+				{
+					tex.dsv = dsvHeapAlloc.Alloc();
+					if (invalid_handle == tex.dsv)
+					{
+						InternalResetTexture(tex);
+						texHandleAlloc.Free(handle);
+						return invalid_handle;
+					}
+				}
+
+				D3D12_RESOURCE_DESC desc = res->GetDesc();
+
+				PixelFormat format = PixelFormatFromDXGI(desc.Format);
+				if (format == FORMAT_AUTO)
+				{
+					InternalResetTexture(tex);
+					texHandleAlloc.Free(handle);
+					return invalid_handle;
+				}
+
+				tex.format = format;
+
+				switch (desc.Dimension)
+				{
+				case D3D12_RESOURCE_DIMENSION_TEXTURE1D:
+					tex.type = TEXTURE_1D;
+					tex.width = desc.Width;
+					tex.height = desc.Height;
+					tex.depth = 1;
+					tex.arraySize = desc.DepthOrArraySize;
+					tex.mipLevels = desc.MipLevels;
+					break;
+				case D3D12_RESOURCE_DIMENSION_TEXTURE2D:
+					// TODO
+					tex.type = (desc.DepthOrArraySize == 6 ? TEXTURE_CUBE : TEXTURE_2D);
+					tex.width = desc.Width;
+					tex.height = desc.Height;
+					tex.depth = 1;
+					tex.arraySize = desc.DepthOrArraySize;
+					tex.mipLevels = desc.MipLevels;
+					break;
+				case D3D12_RESOURCE_DIMENSION_TEXTURE3D:
+					tex.type = TEXTURE_3D;
+					tex.width = desc.Width;
+					tex.height = desc.Height;
+					tex.depth = desc.DepthOrArraySize;
+					tex.arraySize = 1;
+					tex.mipLevels = desc.MipLevels;
+					break;
+				default:
+					InternalResetTexture(tex);
+					texHandleAlloc.Free(handle);
+					return invalid_handle;
+				}
+
+				if (invalid_handle != tex.srv)
+				{
+					CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(srvHeap->GetCPUDescriptorHandleForHeapStart(), tex.srv, srvHeapInc);
+					device->CreateShaderResourceView(tex.texture, nullptr, srvHandle);
+				}
+
+				if (invalid_handle != tex.rtv)
+				{
+					CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(rtvHeap->GetCPUDescriptorHandleForHeapStart(), tex.rtv, rtvHeapInc);
+					device->CreateRenderTargetView(tex.texture, nullptr, rtvHandle);
+				}
+
+				if (invalid_handle != tex.dsv)
+				{
+					CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(dsvHeap->GetCPUDescriptorHandleForHeapStart(), tex.dsv, dsvHeapInc);
+					device->CreateDepthStencilView(tex.texture, nullptr, dsvHandle);
+				}
+
+				return handle;
+			}
+
+			uint16_t InternalCreateTexture(TextureType type, PixelFormat format, uint32_t bindFlags, uint32_t width, uint32_t height, uint32_t depth, uint32_t arraySize, uint32_t mipLevels)
 			{
 				uint16_t handle = texHandleAlloc.Alloc();
 				if (invalid_handle == handle)
@@ -368,7 +491,7 @@ namespace bamboo
 				TextureDX12& tex = textures[handle];
 
 				CD3DX12_HEAP_PROPERTIES heapProp(D3D12_HEAP_TYPE_DEFAULT);
-				
+
 				D3D12_RESOURCE_FLAGS resFlag = D3D12_RESOURCE_FLAG_NONE;
 				if (!(bindFlags & BINDING_SHADER_RESOURCE))
 				{
@@ -380,7 +503,7 @@ namespace bamboo
 					tex.srv = srvHeapAlloc.Alloc();
 					if (invalid_handle == tex.srv)
 					{
-						ResetTexture(tex);
+						InternalResetTexture(tex);
 						texHandleAlloc.Free(handle);
 						return invalid_handle;
 					}
@@ -391,7 +514,7 @@ namespace bamboo
 					tex.rtv = srvHeapAlloc.Alloc();
 					if (invalid_handle == tex.rtv)
 					{
-						ResetTexture(tex);
+						InternalResetTexture(tex);
 						texHandleAlloc.Free(handle);
 						return invalid_handle;
 					}
@@ -406,7 +529,7 @@ namespace bamboo
 					tex.dsv = dsvHeapAlloc.Alloc();
 					if (invalid_handle == tex.dsv)
 					{
-						ResetTexture(tex);
+						InternalResetTexture(tex);
 						texHandleAlloc.Free(handle);
 						return invalid_handle;
 					}
@@ -417,11 +540,12 @@ namespace bamboo
 				}
 
 				CD3DX12_RESOURCE_DESC resDesc;
+				DXGI_FORMAT dxgiFormat = TextureFormatTable[format];
 
 				if (type == TEXTURE_1D)
 				{
 					resDesc = CD3DX12_RESOURCE_DESC::Tex1D(
-						TextureFormatTable[format],
+						dxgiFormat,
 						width,
 						arraySize,
 						mipLevels,
@@ -431,7 +555,7 @@ namespace bamboo
 				else if (type == TEXTURE_2D || type == TEXTURE_CUBE)
 				{
 					resDesc = CD3DX12_RESOURCE_DESC::Tex2D(
-						TextureFormatTable[format],
+						dxgiFormat,
 						width, height,
 						(type == TEXTURE_CUBE ? arraySize * 6 : arraySize),
 						mipLevels,
@@ -442,7 +566,7 @@ namespace bamboo
 				else if (type == TEXTURE_3D)
 				{
 					resDesc = CD3DX12_RESOURCE_DESC::Tex3D(
-						TextureFormatTable[format],
+						dxgiFormat,
 						width, height, depth,
 						mipLevels,
 						resFlag
@@ -452,38 +576,102 @@ namespace bamboo
 				if (FAILED(device->CreateCommittedResource(&heapProp,
 					D3D12_HEAP_FLAG_DENY_BUFFERS,
 					&resDesc,
-					D3D12_RESOURCE_STATE_COPY_DEST,
+					D3D12_RESOURCE_STATE_COMMON,
 					nullptr,
 					IID_PPV_ARGS(&tex.texture))))
 				{
-
-					ResetTexture(tex);
+					InternalResetTexture(tex);
 					texHandleAlloc.Free(handle);
 					return invalid_handle;
 				}
 
 				if (invalid_handle != tex.srv)
 				{
-					D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
-					// MARK
 					CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(srvHeap->GetCPUDescriptorHandleForHeapStart(), tex.srv, srvHeapInc);
-					device->CreateShaderResourceView(tex.texture, &desc, srvHandle);
+					device->CreateShaderResourceView(tex.texture, nullptr, srvHandle);
 				}
+
+				if (invalid_handle != tex.rtv)
+				{
+					CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(rtvHeap->GetCPUDescriptorHandleForHeapStart(), tex.rtv, rtvHeapInc);
+					device->CreateRenderTargetView(tex.texture, nullptr, rtvHandle);
+				}
+
+				if (invalid_handle != tex.dsv)
+				{
+					CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(dsvHeap->GetCPUDescriptorHandleForHeapStart(), tex.dsv, dsvHeapInc);
+					device->CreateDepthStencilView(tex.texture, nullptr, dsvHandle);
+				}
+
+				tex.state = D3D12_RESOURCE_STATE_COMMON;
+
+				tex.type = type;
+				tex.format = format;
+				tex.width = width;
+				tex.height = height;
+				tex.depth = depth;
+				tex.arraySize = arraySize;
+				tex.mipLevels = mipLevels;
 
 				return handle;
 			}
 
-			void DestroyTexture(uint16_t handle)
+			uint16_t InternalCreateTexture(const wchar_t* filename)
 			{
+				ID3D12Resource* res = nullptr;
+				D3D12_SUBRESOURCE_DATA data = {};
+				std::unique_ptr<uint8_t[]> ptr;
+				if (FAILED(DirectX::LoadWICTextureFromFile(
+					device,
+					filename,
+					&res,
+					ptr,
+					data)))
+				{
+					return invalid_handle;
+				}
+
+				uint16_t handle = InternalCreateTexture(res, BINDING_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON);
+
 				if (invalid_handle == handle)
+				{
+					return invalid_handle;
+				}
+
+				cmdList->ResourceBarrier(1,
+					&CD3DX12_RESOURCE_BARRIER::Transition(res, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON)
+				);
+
+				uploadHeap.UploadResource(res, 0, ptr.get(), data.RowPitch);
+
+				return handle;
+			}
+
+			void InternalDestroyTexture(uint16_t handle)
+			{
+				if (!texHandleAlloc.InUse(handle))
 					return;
 
 				TextureDX12& tex = textures[handle];
 
-				RELEASE(tex.texture);
-				if (invalid_handle != tex.srv) rtvHeapAlloc.Free(tex.srv);
-				if (invalid_handle != tex.rtv) rtvHeapAlloc.Free(tex.rtv);
-				if (invalid_handle != tex.dsv) rtvHeapAlloc.Free(tex.dsv);
+				InternalResetTexture(tex);
+			}
+
+			void InternalUpdateTexture(uint16_t handle, const void* data, uint32_t rowPitch)
+			{
+				if (!texHandleAlloc.InUse(handle))
+					return;
+
+				TextureDX12& tex = textures[handle];
+
+				if (tex.state != D3D12_RESOURCE_STATE_COMMON)
+				{
+					CD3DX12_RESOURCE_BARRIER trans = CD3DX12_RESOURCE_BARRIER::Transition(tex.texture, tex.state, D3D12_RESOURCE_STATE_COPY_DEST);
+					cmdList->ResourceBarrier(1, &trans);
+					tex.state = D3D12_RESOURCE_STATE_COMMON;
+				}
+
+				uploadHeap.UploadResource(tex.texture, 0 /* auto */, data, rowPitch);
 			}
 
 #pragma endregion

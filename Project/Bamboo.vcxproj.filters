@@ -75,6 +75,9 @@
     <ClCompile Include="..\Source\GraphicsAPIDX12.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\Source\UploadHeapDX12.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Source\Engine.h">
@@ -132,6 +135,12 @@
       <Filter>3rd_party\DirectXTex</Filter>
     </ClInclude>
     <ClInclude Include="..\Source\GraphicsAPIDX12.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Source\UploadHeapDX12.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Source\BuddyAllocator.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
