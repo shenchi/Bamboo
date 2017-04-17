@@ -91,9 +91,9 @@ namespace bamboo
 			D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
 		};
 
-		DXGI_FORMAT TextureFormatTable[] =
+		DXGI_FORMAT PixelFormatTable[] =
 		{
-			DXGI_FORMAT_R32G32B32A32_FLOAT, // AUTO
+			DXGI_FORMAT_UNKNOWN, // AUTO
 			DXGI_FORMAT_R8G8B8A8_UNORM,
 			DXGI_FORMAT_R8G8B8A8_SNORM,
 			DXGI_FORMAT_R16G16B16A16_UNORM,
@@ -110,7 +110,7 @@ namespace bamboo
 		{
 			for (unsigned i = PixelFormat::FORMAT_AUTO; i < PixelFormat::NUM_PIXEL_FORMAT; ++i)
 			{
-				if (TextureFormatTable[i] == format)
+				if (PixelFormatTable[i] == format)
 				{
 					return static_cast<PixelFormat>(i);
 				}
@@ -146,7 +146,7 @@ namespace bamboo
 				stride = 0;
 			}
 
-			bool Update(ID3D11Device1* device, ID3D11DeviceContext1* context, UINT size, const void* data, UINT stride)
+			bool Update(ID3D11Device1* device, ID3D11DeviceContext1* context, UINT size, const void* data, UINT stride, PixelFormat format)
 			{
 				if (nullptr == buffer)
 				{
@@ -171,7 +171,7 @@ namespace bamboo
 						D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 						srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 						srvDesc.Buffer.NumElements = this->size / stride;
-						srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+						srvDesc.Format = PixelFormatTable[format];
 						if (FAILED(device->CreateShaderResourceView(buffer, &srvDesc, &srv)))
 						{
 							RELEASE(buffer);
@@ -240,7 +240,7 @@ namespace bamboo
 						desc.Width = width;
 						desc.MipLevels = mipLevels;
 						desc.ArraySize = arraySize;
-						desc.Format = TextureFormatTable[format];
+						desc.Format = PixelFormatTable[format];
 						desc.BindFlags = bindFlags;
 						desc.Usage = dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT;
 						if (dynamic) desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -260,7 +260,7 @@ namespace bamboo
 						desc.Height = height;
 						desc.MipLevels = mipLevels; // TODO
 						desc.ArraySize = arraySize;
-						desc.Format = TextureFormatTable[format];
+						desc.Format = PixelFormatTable[format];
 						desc.SampleDesc.Count = 1;
 						desc.BindFlags = bindFlags;
 						desc.Usage = dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT;
@@ -283,7 +283,7 @@ namespace bamboo
 						desc.Height = height;
 						desc.Depth = depth;
 						desc.MipLevels = mipLevels; // TODO
-						desc.Format = TextureFormatTable[format];
+						desc.Format = PixelFormatTable[format];
 						desc.BindFlags = bindFlags;
 						desc.Usage = dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT;
 						if (dynamic) desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -645,15 +645,19 @@ namespace bamboo
 					if (0 != defaultColorBuffer.id)
 						return -1;
 
-					TextureDX11& rt = textures[defaultColorBuffer.id];
-
-					rt.Reset(TextureType::TEXTURE_2D, PixelFormat::FORMAT_AUTO, BINDING_RENDER_TARGET, width, height);
-
 					ID3D11Texture2D* backbufferTex = nullptr;
 					if (S_OK != (hr = swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backbufferTex)))
 					{
 						return -1;
 					}
+
+					D3D11_TEXTURE2D_DESC desc = {};
+					backbufferTex->GetDesc(&desc);
+
+					TextureDX11& rt = textures[defaultColorBuffer.id];
+
+					rt.Reset(TextureType::TEXTURE_2D, PixelFormatFromDXGI(desc.Format), BINDING_RENDER_TARGET, width, height);
+
 					if (S_OK != (hr = device->CreateRenderTargetView(backbufferTex, nullptr, &(rt.rtv))))
 					{
 						return -1;
@@ -1030,11 +1034,11 @@ namespace bamboo
 				bufHandleAlloc.Free(handle.id);
 			}
 
-			void UpdateBuffer(BufferHandle handle, size_t size, const void* data, size_t stride) override
+			void UpdateBuffer(BufferHandle handle, size_t size, const void* data, size_t stride, PixelFormat format) override
 			{
 				if (!bufHandleAlloc.InUse(handle.id)) return;
 				BufferDX11& vb = buffers[handle.id];
-				vb.Update(device, context, static_cast<UINT>(size), data, static_cast<UINT>(stride));
+				vb.Update(device, context, static_cast<UINT>(size), data, static_cast<UINT>(stride), format);
 			}
 
 			TextureHandle CreateTexture(TextureType type, PixelFormat format, uint32_t bindFlags, uint32_t width, uint32_t height, uint32_t depth, uint32_t arraySize, uint32_t mipLevels, bool dynamic) override

@@ -25,6 +25,7 @@ namespace bamboo
 		constexpr size_t RTVHeapSize = 1024;
 		constexpr size_t DSVHeapSize = 1024;
 		constexpr size_t SRVHeapSize = 1024;
+		constexpr size_t SamplerHeapSize = MaxSamplerCount;
 
 
 		DXGI_FORMAT InputSlotTypeTable[][4] =
@@ -100,9 +101,24 @@ namespace bamboo
 			D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
 		};*/
 
-		DXGI_FORMAT TextureFormatTable[] =
+		uint32_t PixelFormatSizeTable[] =
 		{
-			DXGI_FORMAT_R32G32B32A32_FLOAT, // AUTO
+			0,
+			4,
+			4,
+			8,
+			8,
+			16,
+			2,
+			4,
+			2,
+			4,
+			4,
+		};
+
+		DXGI_FORMAT PixelFormatTable[] =
+		{
+			DXGI_FORMAT_UNKNOWN, // AUTO
 			DXGI_FORMAT_R8G8B8A8_UNORM,
 			DXGI_FORMAT_R8G8B8A8_SNORM,
 			DXGI_FORMAT_R16G16B16A16_UNORM,
@@ -119,7 +135,7 @@ namespace bamboo
 		{
 			for (unsigned i = PixelFormat::FORMAT_AUTO; i < PixelFormat::NUM_PIXEL_FORMAT; ++i)
 			{
-				if (TextureFormatTable[i] == format)
+				if (PixelFormatTable[i] == format)
 				{
 					return static_cast<PixelFormat>(i);
 				}
@@ -129,12 +145,18 @@ namespace bamboo
 
 		struct PipelineStateDX12
 		{
+			ID3D12PipelineState*	state;
 
+			PipelineStateDX12()
+				:
+				state(nullptr)
+			{}
 		};
 
 		struct BufferDX12
 		{
 			ID3D12Resource*				buffer;
+			uint16_t					cbv;
 			uint16_t					srv;
 			D3D12_RESOURCE_STATES		state;
 
@@ -185,6 +207,30 @@ namespace bamboo
 			{}
 		};
 
+		struct SamplerDX12
+		{
+			uint32_t				sampler;
+			D3D12_SAMPLER_DESC		desc;
+
+			SamplerDX12()
+				:
+				sampler(invalid_handle),
+				desc{}
+			{}
+		};
+
+		struct ShaderDX12
+		{
+			uint8_t*			data;
+			size_t				size;
+
+			ShaderDX12()
+				:
+				data(nullptr),
+				size(0)
+			{}
+		};
+
 		struct GraphicsAPIDX12 : public GraphicsAPI
 		{
 			int							width;
@@ -207,20 +253,27 @@ namespace bamboo
 			UINT64						frameIndex;
 
 
-			HandleAlloc<RTVHeapSize>	rtvHeapAlloc;
-			HandleAlloc<DSVHeapSize>	dsvHeapAlloc;
-			HandleAlloc<SRVHeapSize>	srvHeapAlloc;
+			HandleAlloc<RTVHeapSize>		rtvHeapAlloc;
+			HandleAlloc<DSVHeapSize>		dsvHeapAlloc;
+			HandleAlloc<SRVHeapSize>		srvHeapAlloc;
+			HandleAlloc<SamplerHeapSize>	sampHeapAlloc;
 
 			ID3D12DescriptorHeap*		rtvHeap;
 			ID3D12DescriptorHeap*		dsvHeap;
 			ID3D12DescriptorHeap*		srvHeap;
+			ID3D12DescriptorHeap*		sampHeap;
 
 			UINT						rtvHeapInc;
 			UINT						dsvHeapInc;
 			UINT						srvHeapInc;
+			UINT						sampHeapInc;
 
+			PipelineStateDX12			pipelineStates[MaxPipelineStateCount];
 			BufferDX12					buffers[MaxBufferCount];
 			TextureDX12					textures[MaxTextureCount];
+			SamplerDX12					samplers[MaxSamplerCount];
+			ShaderDX12					vertexShaders[MaxVertexShaderCount];
+			ShaderDX12					pixelShaders[MaxPixelShaderCount];
 
 			UploadHeapDX12				uploadHeap;
 
@@ -324,6 +377,7 @@ namespace bamboo
 					desc.NumDescriptors = RTVHeapSize;
 					CHECKED(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&rtvHeap)));
 					rtvHeapInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+					rtvHeapAlloc.Reset();
 				}
 
 				{
@@ -332,6 +386,7 @@ namespace bamboo
 					desc.NumDescriptors = DSVHeapSize;
 					CHECKED(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&dsvHeap)));
 					dsvHeapInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+					dsvHeapAlloc.Reset();
 				}
 
 				{
@@ -340,6 +395,16 @@ namespace bamboo
 					desc.NumDescriptors = SRVHeapSize;
 					CHECKED(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&srvHeap)));
 					srvHeapInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+					srvHeapAlloc.Reset();
+				}
+
+				{
+					D3D12_DESCRIPTOR_HEAP_DESC desc = {};
+					desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+					desc.NumDescriptors = SamplerHeapSize;
+					CHECKED(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&sampHeap)));
+					sampHeapInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+					sampHeapAlloc.Reset();
 				}
 
 				CHECKED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cmdAlloc)));
@@ -403,9 +468,49 @@ namespace bamboo
 
 #pragma region resource creation
 
+			void InternalResetPipelineState(PipelineStateDX12& state)
+			{
+				RELEASE(state.state);
+			}
+
+			uint16_t InternalCreatePipelineState(PipelineState& stateDesc)
+			{
+				uint16_t handle = psoHandleAlloc.Alloc();
+				if (invalid_handle == handle)
+					return invalid_handle;
+
+				PipelineStateDX12& state = pipelineStates[handle];
+
+				D3D12_GRAPHICS_PIPELINE_STATE_DESC desc = {};
+
+				{
+					// TODO
+				}
+
+				if (FAILED(device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&(state.state)))))
+				{
+					InternalResetPipelineState(state);
+					psoHandleAlloc.Free(handle);
+					return invalid_handle;
+				}
+
+				return handle;
+			}
+
+			void InternalDestroyPipelineState(uint16_t handle)
+			{
+				if (!psoHandleAlloc.InUse(handle))
+					return;
+
+				PipelineStateDX12& state = pipelineStates[handle];
+				InternalResetPipelineState(state);
+				psoHandleAlloc.Free(handle);
+			}
+
 			void InternalResetBuffer(BufferDX12& buf)
 			{
 				RELEASE(buf.buffer);
+				FREE_HANDLE(buf.cbv, srvHeapAlloc);
 				FREE_HANDLE(buf.srv, srvHeapAlloc);
 			}
 
@@ -418,17 +523,130 @@ namespace bamboo
 				BufferDX12& buf = buffers[handle];
 
 				D3D12_RESOURCE_FLAGS resFlags = D3D12_RESOURCE_FLAG_NONE;
-				D3D12_HEAP_FLAGS heapFlags = D3D12_HEAP_FLAG_NONE;
+				D3D12_HEAP_FLAGS heapFlags = D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS;
 
-				
-				device->CreateCommittedResource(
+				if (FAILED(device->CreateCommittedResource(
 					&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
 					heapFlags,
 					&CD3DX12_RESOURCE_DESC::Buffer(size, resFlags),
 					D3D12_RESOURCE_STATE_COPY_DEST,
 					nullptr,
 					IID_PPV_ARGS(&(buf.buffer))
-				);
+				)))
+				{
+					InternalResetBuffer(buf);
+					bufHandleAlloc.Free(handle);
+					return invalid_handle;
+				}
+
+
+				if (bindFlags & BINDING_CONSTANT_BUFFER)
+				{
+					buf.cbv = srvHeapAlloc.Alloc();
+					if (invalid_handle == buf.cbv)
+					{
+						InternalResetBuffer(buf);
+						bufHandleAlloc.Free(handle);
+						return invalid_handle;
+					}
+
+					CD3DX12_CPU_DESCRIPTOR_HANDLE cbvHandle(
+						srvHeap->GetCPUDescriptorHandleForHeapStart(),
+						buf.cbv,
+						srvHeapInc);
+
+					D3D12_CONSTANT_BUFFER_VIEW_DESC desc = {};
+					desc.BufferLocation = buf.buffer->GetGPUVirtualAddress();
+					desc.SizeInBytes = (static_cast<UINT>(size) + 255) & ~255;
+
+					device->CreateConstantBufferView(&desc, cbvHandle);
+				}
+
+				if (bindFlags & BINDING_SHADER_RESOURCE)
+				{
+					buf.srv = srvHeapAlloc.Alloc();
+					if (invalid_handle == buf.srv)
+					{
+						InternalResetBuffer(buf);
+						bufHandleAlloc.Free(handle);
+						return invalid_handle;
+					}
+				}
+
+				buf.stride = 0;
+				buf.format = FORMAT_AUTO;
+
+				return handle;
+			}
+
+			void InternalDestroyBuffer(uint16_t handle)
+			{
+				if (!bufHandleAlloc.InUse(handle))
+					return;
+
+				BufferDX12& buf = buffers[handle];
+
+				InternalResetBuffer(buf);
+				bufHandleAlloc.Free(handle);
+			}
+
+			void InternalUpdateBuffer(uint16_t handle, uint32_t size, const void* data, uint32_t stride, PixelFormat format)
+			{
+				if (!bufHandleAlloc.InUse(handle))
+					return;
+
+				BufferDX12& buf = buffers[handle];
+
+				// update resource buffer view if needed
+				if (invalid_handle != buf.srv)
+				{
+					if (stride == 0)
+					{
+						if (format == FORMAT_AUTO)
+						{
+							stride = 4;
+							format = FORMAT_R8G8B8A8_UNORM;
+						}
+						else
+						{
+							stride = PixelFormatSizeTable[format];
+						}
+					}
+					else
+					{
+						format = FORMAT_AUTO;
+					}
+
+					if (stride != buf.stride || format != buf.format)
+					{
+						CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(
+							srvHeap->GetCPUDescriptorHandleForHeapStart(),
+							buf.srv,
+							srvHeapInc
+						);
+
+						D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
+
+						desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+						desc.Format = PixelFormatTable[format];
+						desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+						desc.Buffer.FirstElement = 0;
+						desc.Buffer.NumElements = size / stride;
+						desc.Buffer.StructureByteStride = stride;
+						desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+
+						device->CreateShaderResourceView(buf.buffer, nullptr, srvHandle);
+					}
+				}
+
+				if (buf.state != D3D12_RESOURCE_STATE_COMMON)
+				{
+					CD3DX12_RESOURCE_BARRIER trans = CD3DX12_RESOURCE_BARRIER::Transition(buf.buffer, buf.state, D3D12_RESOURCE_STATE_COMMON);
+					cmdList->ResourceBarrier(1, &trans);
+					buf.state = D3D12_RESOURCE_STATE_COMMON;
+				}
+
+				uploadHeap.UploadResource(buf.buffer, size, data, 0);
 			}
 
 			void InternalResetTexture(TextureDX12& tex)
@@ -446,7 +664,7 @@ namespace bamboo
 					return handle;
 
 				TextureDX12& tex = textures[handle];
-				
+
 				tex.texture = res;
 				tex.state = initialState;
 
@@ -605,7 +823,7 @@ namespace bamboo
 				}
 
 				CD3DX12_RESOURCE_DESC resDesc;
-				DXGI_FORMAT dxgiFormat = TextureFormatTable[format];
+				DXGI_FORMAT dxgiFormat = PixelFormatTable[format];
 
 				if (type == TEXTURE_1D)
 				{
@@ -720,6 +938,7 @@ namespace bamboo
 				TextureDX12& tex = textures[handle];
 
 				InternalResetTexture(tex);
+				texHandleAlloc.Free(handle);
 			}
 
 			void InternalUpdateTexture(uint16_t handle, const void* data, uint32_t rowPitch)
@@ -731,12 +950,116 @@ namespace bamboo
 
 				if (tex.state != D3D12_RESOURCE_STATE_COMMON)
 				{
-					CD3DX12_RESOURCE_BARRIER trans = CD3DX12_RESOURCE_BARRIER::Transition(tex.texture, tex.state, D3D12_RESOURCE_STATE_COPY_DEST);
+					CD3DX12_RESOURCE_BARRIER trans = CD3DX12_RESOURCE_BARRIER::Transition(tex.texture, tex.state, D3D12_RESOURCE_STATE_COMMON);
 					cmdList->ResourceBarrier(1, &trans);
 					tex.state = D3D12_RESOURCE_STATE_COMMON;
 				}
 
 				uploadHeap.UploadResource(tex.texture, 0 /* auto */, data, rowPitch);
+			}
+
+			void InternalResetSampler(SamplerDX12& samp)
+			{
+				FREE_HANDLE(samp.sampler, sampHeapAlloc);
+				samp.desc = {};
+			}
+
+			uint16_t InternalCreateSampler()
+			{
+				uint16_t handle = sampHandleAlloc.Alloc();
+				if (invalid_handle == handle)
+					return invalid_handle;
+
+				SamplerDX12& samp = samplers[handle];
+				samp.sampler = sampHeapAlloc.Alloc();
+				if (invalid_handle == samp.sampler)
+				{
+					InternalResetSampler(samp);
+					sampHandleAlloc.Free(handle);
+					return invalid_handle;
+				}
+
+				samp.desc = {};
+				samp.desc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+				samp.desc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+				samp.desc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+				samp.desc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+				samp.desc.MaxLOD = D3D12_FLOAT32_MAX;
+				samp.desc.MaxAnisotropy = 1;
+
+				CD3DX12_CPU_DESCRIPTOR_HANDLE sampHandle(
+					sampHeap->GetCPUDescriptorHandleForHeapStart(),
+					samp.sampler,
+					sampHeapInc
+				);
+
+				device->CreateSampler(&samp.desc, sampHandle);
+				return handle;
+			}
+
+			void InternalDestroySampler(uint16_t handle)
+			{
+				if (!sampHandleAlloc.InUse(handle))
+					return;
+
+				SamplerDX12& samp = samplers[handle];
+				InternalResetSampler(samp);
+				sampHandleAlloc.Free(handle);
+			}
+
+			void InternalResetShader(ShaderDX12& shader)
+			{
+				delete[] shader.data;
+				shader.data = nullptr;
+				shader.size = 0;
+			}
+
+			uint16_t InternalCreateVertexShader(const void* data, size_t size)
+			{
+				uint16_t handle = vsHandleAlloc.Alloc();
+				if (invalid_handle == handle)
+					return invalid_handle;
+
+				ShaderDX12& vs = vertexShaders[handle];
+				vs.data = new uint8_t[size];
+				memcpy(vs.data, data, size);
+				vs.size = size;
+
+				return handle;
+			}
+
+			void InternalDestroyVertexShader(uint16_t handle)
+			{
+				if (!vsHandleAlloc.InUse(handle))
+					return;
+
+				ShaderDX12& vs = vertexShaders[handle];
+				InternalResetShader(vs);
+				vsHandleAlloc.Free(handle);
+			}
+
+			uint16_t InternalCreatePixelShader(const void* data, size_t size)
+			{
+				uint16_t handle = psHandleAlloc.Alloc();
+				if (invalid_handle == handle)
+					return invalid_handle;
+
+				ShaderDX12& ps = pixelShaders[handle];
+				ps.data = new uint8_t[size];
+				memcpy(ps.data, data, size);
+				ps.size = size;
+
+				return handle;
+			}
+
+			void InternalDestroyPixelShader(uint16_t handle)
+			{
+				if (!psHandleAlloc.InUse(handle))
+					return;
+
+				ShaderDX12& ps = pixelShaders[handle];
+				InternalResetShader(ps);
+				psHandleAlloc.Free(handle);
 			}
 
 #pragma endregion
@@ -760,17 +1083,19 @@ namespace bamboo
 			// Buffers
 			BufferHandle CreateBuffer(size_t size, uint32_t bindingFlags, bool dynamic = false) override
 			{
-				return BufferHandle{ invalid_handle };
+				return BufferHandle{ 
+					InternalCreateBuffer(bindingFlags, size)
+				};
 			}
 
 			void DestroyBuffer(BufferHandle handle) override
 			{
-
+				InternalDestroyBuffer(handle.id);
 			}
 
-			void UpdateBuffer(BufferHandle handle, size_t size, const void* data, size_t stride = 0) override
+			void UpdateBuffer(BufferHandle handle, size_t size, const void* data, size_t stride = 0, PixelFormat format = FORMAT_AUTO) override
 			{
-
+				InternalUpdateBuffer(handle.id, size, data, stride, format);
 			}
 
 
@@ -779,20 +1104,20 @@ namespace bamboo
 			{
 				return TextureHandle{
 					InternalCreateTexture(
-						type, 
-						format, 
-						bindFlags, 
-						width, 
-						height, 
-						depth, 
-						arraySize, 
+						type,
+						format,
+						bindFlags,
+						width,
+						height,
+						depth,
+						arraySize,
 						mipLevels)
 				};
 			}
 
 			TextureHandle CreateTexture(const wchar_t* filename) override
 			{
-				return TextureHandle{ 
+				return TextureHandle{
 					InternalCreateTexture(filename)
 				};
 			}
@@ -868,9 +1193,9 @@ namespace bamboo
 					dsvHeapInc);
 
 				cmdList->ClearDepthStencilView(
-					dsvHandle, 
-					D3D12_CLEAR_FLAG_DEPTH, 
-					depth, 
+					dsvHandle,
+					D3D12_CLEAR_FLAG_DEPTH,
+					depth,
 					0, 0, nullptr);
 			}
 
@@ -903,8 +1228,8 @@ namespace bamboo
 					dsvHeapInc);
 
 				cmdList->ClearDepthStencilView(
-					dsvHandle, 
-					D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 
+					dsvHandle,
+					D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
 					depth, stencil, 0, nullptr);
 			}
 
@@ -912,35 +1237,35 @@ namespace bamboo
 			// Samplers
 			SamplerHandle CreateSampler() override
 			{
-				return SamplerHandle{ invalid_handle };
+				return SamplerHandle{ InternalCreateSampler() };
 			}
 
 			void DestroySampler(SamplerHandle handle) override
 			{
-
+				InternalDestroySampler(handle.id);
 			}
 
 
 			// Shaders
 			VertexShaderHandle CreateVertexShader(const void* bytecode, size_t size) override
 			{
-				return VertexShaderHandle{ invalid_handle };
+				return VertexShaderHandle{ InternalCreateVertexShader(bytecode, size) };
 			}
 
 			void DestroyVertexShader(VertexShaderHandle handle) override
 			{
-
+				InternalDestroyVertexShader(handle.id);
 			}
 
 
 			PixelShaderHandle CreatePixelShader(const void* bytecode, size_t size) override
 			{
-				return PixelShaderHandle{ invalid_handle };
+				return PixelShaderHandle{ InternalCreatePixelShader(bytecode, size) };
 			}
 
 			void DestroyPixelShader(PixelShaderHandle handle) override
 			{
-
+				InternalDestroyPixelShader(handle.id);
 			}
 
 
@@ -966,8 +1291,12 @@ namespace bamboo
 				for (uint16_t handle = 0; handle < count; ++handle) \
 					if (alloc.InUse(handle)) func(arr[handle]);
 
+				CLEAR_ARRAY(pipelineStates, MaxPipelineStateCount, psoHandleAlloc, InternalResetPipelineState);
 				CLEAR_ARRAY(buffers, MaxBufferCount, bufHandleAlloc, InternalResetBuffer);
 				CLEAR_ARRAY(textures, MaxTextureCount, texHandleAlloc, InternalResetTexture);
+				CLEAR_ARRAY(samplers, MaxSamplerCount, sampHandleAlloc, InternalResetSampler);
+				CLEAR_ARRAY(vertexShaders, MaxVertexShaderCount, vsHandleAlloc, InternalResetShader);
+				CLEAR_ARRAY(pixelShaders, MaxPixelShaderCount, psHandleAlloc, InternalResetShader);
 
 #undef CLEAR_ARRAY
 

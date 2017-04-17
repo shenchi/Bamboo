@@ -269,7 +269,7 @@ namespace bamboo
 		// Buffers
 		virtual BufferHandle CreateBuffer(size_t size, uint32_t bindingFlags, bool dynamic = false) = 0;
 		virtual void DestroyBuffer(BufferHandle handle) = 0;
-		virtual void UpdateBuffer(BufferHandle handle, size_t size, const void* data, size_t stride = 0) = 0;
+		virtual void UpdateBuffer(BufferHandle handle, size_t size, const void* data, size_t stride = 0, PixelFormat format = FORMAT_AUTO) = 0;
 
 		// Textures
 		virtual TextureHandle CreateTexture(TextureType type, PixelFormat format, uint32_t bindFlags, uint32_t width, uint32_t height = 1, uint32_t depth = 1, uint32_t arraySize = 1, uint32_t mipLevels = 1, bool dynamic = false) = 0;
