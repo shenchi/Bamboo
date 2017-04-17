@@ -94,12 +94,12 @@ namespace bamboo
 			3,
 		};
 
-		/*D3D11_PRIMITIVE_TOPOLOGY PrimitiveTypeTable[] =
+		D3D12_PRIMITIVE_TOPOLOGY_TYPE TopologyTypeTable[] =
 		{
-			D3D11_PRIMITIVE_TOPOLOGY_POINTLIST,
-			D3D11_PRIMITIVE_TOPOLOGY_LINELIST,
-			D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
-		};*/
+			D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT,
+			D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE,
+			D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE,
+		};
 
 		uint32_t PixelFormatSizeTable[] =
 		{
@@ -481,10 +481,76 @@ namespace bamboo
 
 				PipelineStateDX12& state = pipelineStates[handle];
 
+				D3D12_INPUT_ELEMENT_DESC elements[MaxVertexInputElement];
 				D3D12_GRAPHICS_PIPELINE_STATE_DESC desc = {};
 
 				{
-					// TODO
+					desc.pRootSignature = nullptr; // TODO
+
+					uint16_t vsHandle = stateDesc.VertexShader.id;
+					if (vsHandleAlloc.InUse(vsHandle))
+					{
+						desc.VS = CD3DX12_SHADER_BYTECODE(
+							vertexShaders[vsHandle].data,
+							vertexShaders[vsHandle].size
+						);
+
+						uint16_t elementCount = stateDesc.VertexLayout.ElementCount;
+
+						UINT offset = 0;
+						UINT lastSlot = 0;
+
+						for (size_t i = 0; i < elementCount; ++i)
+						{
+							const VertexInputElement& elem = stateDesc.VertexLayout.Elements[i];
+							D3D12_INPUT_ELEMENT_DESC& desc = elements[i];
+
+							size_t size = InputSlotSizeTable[elem.ComponentType] * (elem.ComponentCount + 1);
+
+							if (elem.BindingSlot != lastSlot)
+								offset = 0;
+
+							desc.AlignedByteOffset = offset;
+							desc.Format = InputSlotTypeTable[elem.ComponentType][elem.ComponentCount];
+							desc.InputSlot = elem.BindingSlot;
+							desc.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+							desc.InstanceDataStepRate = 0;
+							desc.SemanticIndex = InputSemanticsIndex[elem.SemanticId];
+							desc.SemanticName = InputSemanticsTable[elem.SemanticId];
+
+							offset += static_cast<UINT>(size);
+							lastSlot = elem.BindingSlot;
+						}
+
+						desc.InputLayout = { nullptr, stateDesc.VertexLayout.ElementCount };
+					}
+					else
+					{
+						desc.VS = CD3DX12_SHADER_BYTECODE();
+					}
+
+					uint16_t psHandle = stateDesc.PixelShader.id;
+					if (psHandleAlloc.InUse(psHandle))
+					{
+						desc.PS = CD3DX12_SHADER_BYTECODE(
+							pixelShaders[psHandle].data,
+							pixelShaders[psHandle].size
+						);
+					}
+					else
+					{
+						desc.PS = CD3DX12_SHADER_BYTECODE();
+					}
+
+					desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+					desc.SampleMask = UINT_MAX;
+					desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+					desc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+					desc.PrimitiveTopologyType = TopologyTypeTable[stateDesc.PrimitiveType];
+					// desc.NumRenderTargets = stateDesc.
+					// desc.RTVFormats = 
+					// desc.DSVFormat = 
+					desc.SampleDesc.Count = 1;
 				}
 
 				if (FAILED(device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&(state.state)))))
@@ -1083,7 +1149,7 @@ namespace bamboo
 			// Buffers
 			BufferHandle CreateBuffer(size_t size, uint32_t bindingFlags, bool dynamic = false) override
 			{
-				return BufferHandle{ 
+				return BufferHandle{
 					InternalCreateBuffer(bindingFlags, size)
 				};
 			}
