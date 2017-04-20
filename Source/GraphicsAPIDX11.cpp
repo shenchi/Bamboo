@@ -118,6 +118,68 @@ namespace bamboo
 			return FORMAT_AUTO;
 		}
 
+		struct BindingLayoutDX11
+		{
+			uint32_t					entryCount;
+			BindingLayout				layout;
+			uint32_t					offsets[MaxBindingLayoutEntry];
+			ID3D11Buffer*				cbs[MaxBindingLayoutEntry];
+			
+			bool Reset(ID3D11Device* device, const BindingLayout& layout)
+			{
+				Release();
+
+				uint32_t offset = 0;
+
+				for (size_t i = 0; i < MaxBindingLayoutEntry; ++i)
+				{
+					auto& entry = layout.table[i];
+					if (entry.Type == BINDING_SLOT_TYPE_NONE)
+					{
+						entryCount = i;
+						break;
+					}
+
+					offsets[i] = offset;
+					uint32_t count = (
+						entry.Type == BINDING_SLOT_TYPE_TABLE ?
+						0 : (entry.Count == 0 ? 1 : entry.Count));
+					uint32_t size = 4 * count;
+					offset += size;
+
+					if (entry.Type == BINDING_SLOT_TYPE_CONSTANT)
+					{
+						D3D11_BUFFER_DESC desc = {};
+						desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+						desc.ByteWidth = ((size + 15u) & (~15u));
+						desc.Usage = D3D11_USAGE_DYNAMIC;
+						desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+						if (FAILED(device->CreateBuffer(&desc, nullptr, &cbs[i])))
+						{
+							Release();
+							return false;
+						}
+					}
+				}
+
+				return true;
+			}
+
+			void Release()
+			{
+				for (int i = 0; i < MaxBindingLayoutEntry; i++)
+				{
+					if (nullptr != cbs[i])
+					{
+						cbs[i]->Release();
+						cbs[i] = nullptr;
+					}
+				}
+				entryCount = 0;
+				layout = {};
+			}
+		};
+
 		struct BufferDX11
 		{
 			ID3D11Buffer*				buffer;
@@ -130,6 +192,10 @@ namespace bamboo
 			void Reset(UINT size, UINT bindFlags, bool dynamic)
 			{
 				Release();
+				if (bindFlags & BINDING_CONSTANT_BUFFER)
+				{
+					size = ((size + 15u) & (~15u));
+				}
 				this->size = size;
 				this->bindFlags = bindFlags;
 				this->dynamic = dynamic;
@@ -513,6 +579,8 @@ namespace bamboo
 			IDXGISwapChain1*			swapChain;
 			ID3D11Device1*				device;
 			ID3D11DeviceContext1*		context;
+
+			BindingLayoutDX11			bindingLayouts[MaxBindingLayoutCount];
 
 			PipelineStateDX11			pipelineStates[MaxPipelineStateCount];
 
@@ -978,6 +1046,27 @@ namespace bamboo
 			// interface implementation
 #pragma region interface implementation
 
+			BindingLayoutHandle CreateBindingLayout(const BindingLayout& layout) override
+			{
+				uint16_t handle = blHandleAlloc.Alloc();
+
+				if (invalid_handle == handle) 
+					return BindingLayoutHandle{ invalid_handle };
+
+				BindingLayoutDX11& bl = bindingLayouts[handle];
+				bl.Reset(layout);
+				
+				return BindingLayoutHandle{ handle };
+			}
+
+			void DestroyBindingLayout(BindingLayoutHandle handle) override
+			{
+				if (!blHandleAlloc.InUse(handle.id)) return;
+				BindingLayoutDX11& bl = bindingLayouts[handle.id];
+				bl.Release();
+				blHandleAlloc.Free(handle.id);
+			}
+
 			PipelineStateHandle CreatePipelineState(const PipelineState& state) override
 			{
 				uint16_t handle = psoHandleAlloc.Alloc();
@@ -1359,7 +1448,8 @@ namespace bamboo
 #define CLEAR_ARRAY(arr, count, alloc) \
 				for (uint16_t handle = 0; handle < count; ++handle) \
 					if (alloc.InUse(handle)) arr[handle].Release();
-				 
+				
+				CLEAR_ARRAY(bindingLayouts, MaxBindingLayoutCount, blHandleAlloc);
 				CLEAR_ARRAY(pipelineStates, MaxPipelineStateCount, psoHandleAlloc);
 				CLEAR_ARRAY(buffers, MaxBufferCount, bufHandleAlloc);
 				CLEAR_ARRAY(textures, MaxTextureCount, texHandleAlloc);

@@ -9,6 +9,7 @@ namespace bamboo
 
 	constexpr uint16_t invalid_handle = UINT16_MAX;
 
+	HANDLE_DECLARE(BindingLayout);
 	HANDLE_DECLARE(PipelineState);
 	HANDLE_DECLARE(Buffer);
 	HANDLE_DECLARE(Texture);
@@ -103,13 +104,31 @@ namespace bamboo
 		TEXTURE_CUBE,
 	};
 
+	enum BindingSlotType
+	{
+		BINDING_SLOT_TYPE_NONE = 0,
+		BINDING_SLOT_TYPE_CONSTANT,
+		BINDING_SLOT_TYPE_TABLE,
+		BINDING_SLOT_TYPE_CBV,
+		BINDING_SLOT_TYPE_SRV,
+	};
+
+	enum ShaderVisibility
+	{
+		SHADER_VISIBILITY_ALL = 0,
+		SHADER_VISIBILITY_VERTEX,
+		SHADER_VISIBILITY_PIXEL
+	};
+
 	constexpr size_t MaxVertexInputElement = 16;
 	constexpr size_t MaxVertexBufferBindingSlot = 8;
 	constexpr size_t MaxConstantBufferBindingSlot = 16;
 	constexpr size_t MaxRenderTargetBindingSlot = 8;
-	constexpr size_t MaxShaderResourceBindingSlot = 16; // 128;
+	constexpr size_t MaxBindingLayoutEntry = 256;
+	constexpr size_t MaxBindingSlot = 128;
 	constexpr size_t MaxSamplerBindingSlot = 16;
 
+	constexpr size_t MaxBindingLayoutCount = 32;
 	constexpr size_t MaxPipelineStateCount = 1024;
 	constexpr size_t MaxBufferCount = 4096;
 	constexpr size_t MaxTextureCount = 1024;
@@ -148,6 +167,7 @@ namespace bamboo
 #pragma pack(push, 1)
 	struct PipelineState
 	{
+		BindingLayoutHandle			BindingLayout;
 		VertexLayout				VertexLayout;
 
 		union
@@ -175,7 +195,34 @@ namespace bamboo
 		VertexShaderHandle			VertexShader;
 		PixelShaderHandle			PixelShader;
 
+		uint32_t					RenderTargetCount;
+		PixelFormat					RenderTargetFormats[MaxRenderTargetBindingSlot];
+		PixelFormat					DepthStencilFormat;
+
 		PrimitiveType				PrimitiveType;
+	};
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+	struct BindingLayout
+	{
+		struct Entry
+		{
+			union 
+			{
+				uint32_t			RawData;
+				struct
+				{
+					uint8_t			Type : 4;
+					uint8_t			ShaderVisibility : 4;
+					uint8_t			Register;
+					uint8_t			Space;
+					uint8_t			Count;
+				};
+			};
+		};
+
+		Entry						table[MaxBindingLayoutEntry];
 	};
 #pragma pack(pop)
 
@@ -189,13 +236,12 @@ namespace bamboo
 			struct
 			{
 				uint32_t			VertexBufferCount : 8;
-				uint32_t			ConstantBufferCount : 4;
+				uint32_t			BindingSlotCount : 8;
 				uint32_t			RenderTargetCount : 4;
-				uint32_t			TextureCount : 4;
 				uint32_t			SamplerCount : 4;
 				uint32_t			HasIndexBuffer : 1;
 				uint32_t			HasDepthStencil : 1;
-				uint32_t			_Reserved : 6;
+				uint32_t			_Reserved : 14;
 			};
 			uint32_t				InfoBits;
 		};
@@ -203,43 +249,10 @@ namespace bamboo
 		BufferHandle				VertexBuffers[MaxVertexBufferBindingSlot];
 		BufferHandle				IndexBuffer;
 
-		struct
-		{
-			BufferHandle			Handle;
-			union
-			{
-				struct
-				{
-					uint16_t			BindingVertexShader : 1;
-					uint16_t			BindingPixelShader : 1;
-					uint16_t			_Reserved : 14;
-				};
-				uint16_t				BindingFlag;
-			};
-		}							ConstantBuffers[MaxConstantBufferBindingSlot];
+		uint32_t					ShaderResourcesBinding[MaxBindingSlot];
 
 		TextureHandle				RenderTargets[MaxRenderTargetBindingSlot];
 		TextureHandle				DepthStencil;
-
-		struct
-		{
-			union
-			{
-				TextureHandle			Texture;
-				BufferHandle			Buffer;
-			};
-			union
-			{
-				struct
-				{
-					uint16_t			BindingVertexShader : 1;
-					uint16_t			BindingPixelShader : 1;
-					uint16_t			_Reserved : 13;
-					uint16_t			IsBuffer : 1;
-				};
-				uint16_t				BindingFlag;
-			};
-		}							ShaderResources[MaxShaderResourceBindingSlot];
 
 		struct
 		{
@@ -262,6 +275,10 @@ namespace bamboo
 
 	struct GraphicsAPI
 	{
+		// Binding Layout
+		virtual BindingLayoutHandle CreateBindingLayout(const BindingLayout& layout) = 0;
+		virtual void DestroyBindingLayout(BindingLayoutHandle handle) = 0;
+
 		// Pipeline States
 		virtual PipelineStateHandle CreatePipelineState(const PipelineState& state) = 0;
 		virtual void DestroyPipelineState(PipelineStateHandle handle) = 0;
@@ -302,6 +319,7 @@ namespace bamboo
 		// Clean up
 		virtual void Shutdown() = 0;
 
+		HandleAlloc<MaxBindingLayoutCount>		blHandleAlloc;
 		HandleAlloc<MaxPipelineStateCount>		psoHandleAlloc;
 		HandleAlloc<MaxBufferCount>				bufHandleAlloc;
 		HandleAlloc<MaxTextureCount>			texHandleAlloc;

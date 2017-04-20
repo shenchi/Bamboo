@@ -547,9 +547,12 @@ namespace bamboo
 					desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
 					desc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
 					desc.PrimitiveTopologyType = TopologyTypeTable[stateDesc.PrimitiveType];
-					// desc.NumRenderTargets = stateDesc.
-					// desc.RTVFormats = 
-					// desc.DSVFormat = 
+					desc.NumRenderTargets = stateDesc.RenderTargetCount;
+					for (size_t i = 0; i < desc.NumRenderTargets; i++)
+					{
+						desc.RTVFormats[i] = PixelFormatTable[stateDesc.RenderTargetFormats[i]];
+					}
+					desc.DSVFormat = PixelFormatTable[stateDesc.DepthStencilFormat];
 					desc.SampleDesc.Count = 1;
 				}
 
