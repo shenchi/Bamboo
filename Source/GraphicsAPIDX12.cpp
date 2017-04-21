@@ -2145,7 +2145,7 @@ namespace bamboo
 
 				CloseHandle(fenceEvent);
 
-				uploadHeap.Clear();
+				uploadHeap.Release();
 
 				sampHeap->Release();
 				rtvHeap->Release();

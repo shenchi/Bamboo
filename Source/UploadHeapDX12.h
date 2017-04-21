@@ -32,6 +32,8 @@ namespace bamboo
 
 			void Clear();
 
+			void Release();
+
 			ID3D12Device*				device;
 			ID3D12GraphicsCommandList*	cmdList;
 			ID3D12Heap*					heap;

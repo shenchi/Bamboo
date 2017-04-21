@@ -134,6 +134,12 @@ namespace bamboo
 			bufferCount = 0;
 		}
 
+		void UploadHeapSyncDX12::Release()
+		{
+			Clear();
+			RELEASE(heap);
+		}
+
 
 #pragma endregion
 
