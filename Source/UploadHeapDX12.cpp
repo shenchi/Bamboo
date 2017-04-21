@@ -79,39 +79,40 @@ namespace bamboo
 			buffers[bufIdx].offset = static_cast<uint32_t>(offset);
 			buffers[bufIdx].resource = uploadRes;
 
-			//  MARK
+			UpdateSubresources(cmdList, destRes, uploadRes, 0, firstSubRes, subResCount, data);
 
-			void* pData = nullptr;
+			/*void* pData = nullptr;
 			D3D12_RANGE range = { 0, 0 };
 			if (FAILED(uploadRes->Map(0, &range, &pData)))
 			{
 				return false;
 			}
 			memcpy(pData, data, size);
-			uploadRes->Unmap(0, nullptr);
+			uploadRes->Unmap(0, nullptr);*/
+
 
 
 			/*cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(destRes,
 				D3D12_RESOURCE_STATE_COMMON,
 				D3D12_RESOURCE_STATE_COPY_DEST));*/
 
-			if (0 == rowPitch) // for buffer
-			{
-				cmdList->CopyBufferRegion(destRes, 0, uploadRes, 0, size);
-			}
-			else // for texture
-			{
-				D3D12_RESOURCE_DESC destDesc = destRes->GetDesc();
-				D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint =
-				{
-					0,
-					CD3DX12_SUBRESOURCE_FOOTPRINT(destDesc, rowPitch)
-				};
-				CD3DX12_TEXTURE_COPY_LOCATION srcLoc(uploadRes, footprint);
-				CD3DX12_TEXTURE_COPY_LOCATION destLoc(destRes, 0);
+			//if (0 == rowPitch) // for buffer
+			//{
+			//	cmdList->CopyBufferRegion(destRes, 0, uploadRes, 0, size);
+			//}
+			//else // for texture
+			//{
+			//	D3D12_RESOURCE_DESC destDesc = destRes->GetDesc();
+			//	D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint =
+			//	{
+			//		0,
+			//		CD3DX12_SUBRESOURCE_FOOTPRINT(destDesc, rowPitch)
+			//	};
+			//	CD3DX12_TEXTURE_COPY_LOCATION srcLoc(uploadRes, footprint);
+			//	CD3DX12_TEXTURE_COPY_LOCATION destLoc(destRes, 0);
 
-				cmdList->CopyTextureRegion(&destLoc, 0, 0, 0, &srcLoc, nullptr);
-			}
+			//	cmdList->CopyTextureRegion(&destLoc, 0, 0, 0, &srcLoc, nullptr);
+			//}
 
 			/*cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(destRes,
 				D3D12_RESOURCE_STATE_COPY_DEST,

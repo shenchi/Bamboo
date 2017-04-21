@@ -234,6 +234,7 @@ namespace bamboo
 			uint32_t					depth;
 			uint32_t					arraySize;
 			uint32_t					mipLevels;
+			bool						isCubeMap;
 
 			TextureDX12()
 				:
@@ -865,7 +866,22 @@ namespace bamboo
 															D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
 														);
 
-														device->CreateShaderResourceView(tex.texture, nullptr, cpuHandle);
+														if (tex.isCubeMap)
+														{
+															auto desc = tex.texture->GetDesc();
+															D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+															srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+															srvDesc.Format = desc.Format;
+															srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+															srvDesc.TextureCube.MipLevels = desc.MipLevels;
+															srvDesc.TextureCube.MostDetailedMip = desc.MipLevels - 1;
+
+															device->CreateShaderResourceView(tex.texture, &srvDesc, cpuHandle);
+														}
+														else
+														{
+															device->CreateShaderResourceView(tex.texture, nullptr, cpuHandle);
+														}
 													}
 													else
 													{
@@ -1395,7 +1411,12 @@ namespace bamboo
 				TransistResource(buf.buffer, buf.state, D3D12_RESOURCE_STATE_COMMON);
 #endif
 
-				uploadHeap.UploadResource(buf.buffer, size, data, 0);
+				//uploadHeap.UploadResource(buf.buffer, size, data, 0);
+				D3D12_SUBRESOURCE_DATA dataDesc = {};
+				dataDesc.pData = data;
+				dataDesc.RowPitch = size;
+				dataDesc.SlicePitch = size;
+				uploadHeap.UploadResource(buf.buffer, 0, 1, &dataDesc);
 			}
 
 			void InternalResetTexture(TextureDX12& tex)
@@ -1660,13 +1681,15 @@ namespace bamboo
 				std::vector<D3D12_SUBRESOURCE_DATA> data;
 				std::unique_ptr<uint8_t[]> ptr;
 
+				bool isCubeMap = false;
+
 				size_t fnLen = wcslen(filename);
 				if (filename[fnLen - 4] == L'.' &&
 					filename[fnLen - 3] == L'd' &&
 					filename[fnLen - 2] == L'd' &&
 					filename[fnLen - 1] == L's')
 				{
-					if (FAILED(DirectX::LoadDDSTextureFromFile(device, filename, &res, ptr, data)))
+					if (FAILED(DirectX::LoadDDSTextureFromFile(device, filename, &res, ptr, data, 0Ui64, nullptr, &isCubeMap)))
 					{
 						return invalid_handle;
 					}
@@ -1703,8 +1726,8 @@ namespace bamboo
 					&CD3DX12_RESOURCE_BARRIER::Transition(res, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON)
 				);
 #endif
-
-				uploadHeap.UploadResource(res, 0, ptr.get(), static_cast<uint32_t>(data[0].RowPitch));
+				textures[handle].isCubeMap = isCubeMap;
+				uploadHeap.UploadResource(res, 0, data.size(), &data[0]);
 
 				return handle;
 			}
@@ -1732,8 +1755,12 @@ namespace bamboo
 #else
 				TransistResource(tex.texture, tex.state, D3D12_RESOURCE_STATE_COMMON);
 #endif
+				D3D12_SUBRESOURCE_DATA dataDesc = {};
+				dataDesc.pData = data;
+				dataDesc.RowPitch = rowPitch;
+				// TODO
 
-				uploadHeap.UploadResource(tex.texture, 0 /* auto */, data, rowPitch);
+				uploadHeap.UploadResource(tex.texture, 0, 1, &dataDesc);
 			}
 
 			void InternalResetSampler(SamplerDX12& samp)
@@ -2120,6 +2147,7 @@ namespace bamboo
 
 				uploadHeap.Clear();
 
+				sampHeap->Release();
 				rtvHeap->Release();
 				dsvHeap->Release();
 				srvHeap->Release();
