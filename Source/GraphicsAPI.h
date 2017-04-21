@@ -111,6 +111,7 @@ namespace bamboo
 		BINDING_SLOT_TYPE_TABLE,
 		BINDING_SLOT_TYPE_CBV,
 		BINDING_SLOT_TYPE_SRV,
+		BINDING_SLOT_TYPE_SAMPLER,
 	};
 
 	enum ShaderVisibility
@@ -125,7 +126,7 @@ namespace bamboo
 	constexpr size_t MaxConstantBufferBindingSlot = 16;
 	constexpr size_t MaxRenderTargetBindingSlot = 8;
 	constexpr size_t MaxBindingLayoutEntry = 256;
-	constexpr size_t MaxBindingSlot = 128;
+	constexpr size_t MaxBindingDataSize = 128;
 	constexpr size_t MaxSamplerBindingSlot = 16;
 
 	constexpr size_t MaxBindingLayoutCount = 32;
@@ -223,6 +224,15 @@ namespace bamboo
 		};
 
 		Entry						table[MaxBindingLayoutEntry];
+
+		void SetEntry(uint32_t idx, BindingSlotType type, ShaderVisibility visibility, uint8_t count, uint8_t reg, uint8_t space = 0)
+		{
+			table[idx].Type = type;
+			table[idx].ShaderVisibility = visibility;
+			table[idx].Register = reg;
+			table[idx].Count = count;
+			table[idx].Space = space;
+		}
 	};
 #pragma pack(pop)
 
@@ -236,7 +246,7 @@ namespace bamboo
 			struct
 			{
 				uint32_t			VertexBufferCount : 8;
-				uint32_t			BindingSlotCount : 8;
+				uint32_t			BindingDataSize : 8;
 				uint32_t			RenderTargetCount : 4;
 				uint32_t			SamplerCount : 4;
 				uint32_t			HasIndexBuffer : 1;
@@ -249,12 +259,12 @@ namespace bamboo
 		BufferHandle				VertexBuffers[MaxVertexBufferBindingSlot];
 		BufferHandle				IndexBuffer;
 
-		uint32_t					ShaderResourcesBinding[MaxBindingSlot];
+		uint32_t					ResourceBindingData[MaxBindingDataSize];
 
 		TextureHandle				RenderTargets[MaxRenderTargetBindingSlot];
 		TextureHandle				DepthStencil;
 
-		struct
+		/*struct
 		{
 			SamplerHandle			Handle;
 			union
@@ -267,9 +277,33 @@ namespace bamboo
 				};
 				uint16_t				BindingFlag;
 			};
-		}							Samplers[MaxSamplerBindingSlot];
+		}							Samplers[MaxSamplerBindingSlot];*/
 
 		Viewport					Viewport;
+
+		void FillBindingData(uint32_t offset, BufferHandle handle)
+		{
+			ResourceBindingData[offset] = handle.id;
+		}
+
+		void FillBindingData(uint32_t offset, TextureHandle handle)
+		{
+			ResourceBindingData[offset] = handle.id;
+		}
+
+		void FillBindingData(uint32_t offset, SamplerHandle handle)
+		{
+			ResourceBindingData[offset] = handle.id;
+		}
+
+		void* BindingDataPointer(uint32_t offset)
+		{
+			return ResourceBindingData + offset;
+		}
+
+		void FillBindingData(uint32_t offset, const void* data, size_t size);
+
+		void ClearBindingData();
 	};
 #pragma pack(pop)
 

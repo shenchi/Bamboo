@@ -3,6 +3,8 @@
 #include "GraphicsAPIDX11.h"
 #include "GraphicsAPIDX12.h"
 
+#include <cstring>
+
 namespace bamboo
 {
 	GraphicsAPI* InitGraphicsAPI(GraphicsAPIType type, void* windowHandle)
@@ -20,5 +22,15 @@ namespace bamboo
 			break;
 		}
 		return nullptr;
+	}
+
+	void DrawCall::FillBindingData(uint32_t offset, const void * data, size_t size)
+	{
+		memcpy(ResourceBindingData + offset, data, size);
+	}
+
+	void DrawCall::ClearBindingData()
+	{
+		memset(ResourceBindingData, 0, sizeof(ResourceBindingData));
 	}
 }

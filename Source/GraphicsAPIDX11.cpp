@@ -18,6 +18,8 @@ namespace bamboo
 	namespace dx11
 	{
 
+		constexpr size_t MaxShaderResourceBindingSlot = 128;
+
 		DXGI_FORMAT InputSlotTypeTable[][4] =
 		{
 			// TYPE_FLOAT
@@ -124,14 +126,14 @@ namespace bamboo
 			BindingLayout				layout;
 			uint32_t					offsets[MaxBindingLayoutEntry];
 			ID3D11Buffer*				cbs[MaxBindingLayoutEntry];
-			
+
 			bool Reset(ID3D11Device* device, const BindingLayout& layout)
 			{
 				Release();
 
-				uint32_t offset = 0;
+				uint32_t offset = 0, i = 0;
 
-				for (size_t i = 0; i < MaxBindingLayoutEntry; ++i)
+				for (; i < MaxBindingLayoutEntry; ++i)
 				{
 					auto& entry = layout.table[i];
 					if (entry.Type == BINDING_SLOT_TYPE_NONE)
@@ -161,6 +163,13 @@ namespace bamboo
 						}
 					}
 				}
+
+				if (i == MaxBindingLayoutEntry)
+				{
+					entryCount = MaxBindingLayoutEntry;
+				}
+
+				this->layout = layout;
 
 				return true;
 			}
@@ -243,7 +252,7 @@ namespace bamboo
 							RELEASE(buffer);
 							return false;
 						}
-	
+
 					}
 				}
 				else if (dynamic)
@@ -302,7 +311,7 @@ namespace bamboo
 					if (type == TEXTURE_1D)
 					{
 						D3D11_TEXTURE1D_DESC desc = {};
-						
+
 						desc.Width = width;
 						desc.MipLevels = mipLevels;
 						desc.ArraySize = arraySize;
@@ -488,6 +497,8 @@ namespace bamboo
 			ID3D11RasterizerState*		rsState;
 			ID3D11DepthStencilState*	dsState;
 
+			BindingLayoutHandle			bindingLayout;
+
 			VertexShaderHandle			vs;
 			PixelShaderHandle			ps;
 
@@ -553,6 +564,7 @@ namespace bamboo
 					}
 				}
 
+				bindingLayout = state.BindingLayout;
 				vs = state.VertexShader;
 				ps = state.PixelShader;
 				topology = PrimitiveTypeTable[state.PrimitiveType];
@@ -596,7 +608,7 @@ namespace bamboo
 			TextureHandle				defaultColorBuffer;
 			TextureHandle				defaultDepthStencilBuffer;
 
-			PipelineStateHandle			internalState;
+			PipelineStateHandle			currentPipelineState;
 
 			int Init(void* windowHandle)
 			{
@@ -779,7 +791,7 @@ namespace bamboo
 					context->RSSetViewports(1, &viewport);
 				}
 
-				internalState.id = invalid_handle;
+				currentPipelineState.id = invalid_handle;
 			}
 
 			void SetPipelineState(const PipelineStateDX11& state)
@@ -879,118 +891,184 @@ namespace bamboo
 					context->RSSetViewports(1, &vp);
 				}
 
-				// Constant Buffers
 				{
-					ID3D11Buffer* vsCBs[MaxConstantBufferBindingSlot];
-					ID3D11Buffer* psCBs[MaxConstantBufferBindingSlot];
+					ID3D11Buffer* vsCBs[MaxConstantBufferBindingSlot] = {};
+					ID3D11Buffer* psCBs[MaxConstantBufferBindingSlot] = {};
 					UINT vsCBCount = 0, psCBCount = 0;
 
-					for (uint32_t i = 0; i < drawcall.ConstantBufferCount; ++i)
+					ID3D11ShaderResourceView* vsSRVs[MaxShaderResourceBindingSlot] = {};
+					ID3D11ShaderResourceView* psSRVs[MaxShaderResourceBindingSlot] = {};
+					UINT vsSRVCount = 0, psSRVCount = 0;
+
+					ID3D11SamplerState* vsSamps[MaxSamplerBindingSlot] = {};
+					ID3D11SamplerState* psSamps[MaxSamplerBindingSlot] = {};
+					UINT vsSampCount = 0, psSampCount = 0;
+
+					if (!psoHandleAlloc.InUse(currentPipelineState.id))
 					{
-						uint16_t handle = drawcall.ConstantBuffers[i].Handle.id;
-#if _DEBUG
-						if (!bufHandleAlloc.InUse(handle))
-							return false;
-#endif
-						auto& buf = buffers[handle];
-						if ((buf.bindFlags & BINDING_CONSTANT_BUFFER) == 0)
-							return false;
+						return false;
+					}
+					uint16_t handle = pipelineStates[currentPipelineState.id].bindingLayout.id;
+					if (!blHandleAlloc.InUse(handle))
+					{
+						return false;
+					}
 
-						ID3D11Buffer* cb = buf.buffer;
+					BindingLayoutDX11& layout = bindingLayouts[handle];
+					const uint8_t* pData = reinterpret_cast<const uint8_t*>(drawcall.ResourceBindingData);
 
-						if (drawcall.ConstantBuffers[i].BindingVertexShader)
+					for (size_t i = 0; i < layout.entryCount; i++)
+					{
+						auto& entry = layout.layout.table[i];
+						switch (entry.Type)
 						{
-							vsCBs[vsCBCount] = cb;
-							vsCBCount++;
-						}
+						case BINDING_SLOT_TYPE_CONSTANT:
+							if (SHADER_VISIBILITY_ALL == entry.ShaderVisibility ||
+								SHADER_VISIBILITY_VERTEX == entry.ShaderVisibility)
+							{
+								vsCBs[entry.Register] = layout.cbs[i];
+								if (entry.Register + 1u > vsCBCount)
+									vsCBCount = entry.Register + 1u;
+							}
+							if (SHADER_VISIBILITY_ALL == entry.ShaderVisibility ||
+								SHADER_VISIBILITY_PIXEL == entry.ShaderVisibility)
+							{
+								psCBs[entry.Register] = layout.cbs[i];
+								if (entry.Register + 1u > psCBCount)
+									psCBCount = entry.Register + 1u;
+							}
+							{
+								uint32_t size = entry.Count * 4;
+								uint32_t offset = layout.offsets[i];
+								D3D11_MAPPED_SUBRESOURCE subRes = {};
+								if (FAILED(context->Map(layout.cbs[i], 0, D3D11_MAP_WRITE_DISCARD, 0, &subRes)))
+									return false;
+								memcpy(subRes.pData, pData + offset, size);
+								context->Unmap(layout.cbs[i], 0);
+							}
+							break;
+						case BINDING_SLOT_TYPE_CBV:
+							for (uint32_t j = 0; j < entry.Count; j++)
+							{
+								uint32_t r = entry.Register + j;
+								uint32_t offset = layout.offsets[i] + 4u * j;
+								uint16_t handle = static_cast<uint16_t>(*reinterpret_cast<const uint32_t*>((pData + offset)));
 
-						if (drawcall.ConstantBuffers[i].BindingPixelShader)
-						{
-							psCBs[psCBCount] = cb;
-							psCBCount++;
+								ID3D11Buffer* buffer = nullptr;
+
+								if (invalid_handle != handle)
+								{
+									if (!bufHandleAlloc.InUse(handle))
+										return false;
+									BufferDX11& buf = buffers[handle];
+									buffer = buf.buffer;
+								}
+								
+								if (SHADER_VISIBILITY_ALL == entry.ShaderVisibility ||
+									SHADER_VISIBILITY_VERTEX == entry.ShaderVisibility)
+								{
+									vsCBs[r] = buffer;
+									if (r + 1u > vsCBCount)
+										vsCBCount = r + 1u;
+								}
+								if (SHADER_VISIBILITY_ALL == entry.ShaderVisibility ||
+									SHADER_VISIBILITY_PIXEL == entry.ShaderVisibility)
+								{
+									psCBs[r] = buffer;
+									if (r + 1u > psCBCount)
+										psCBCount = r + 1u;
+								}
+							}
+							break;
+						case BINDING_SLOT_TYPE_SRV:
+							for (uint32_t j = 0; j < entry.Count; j++)
+							{
+								uint32_t r = entry.Register + j;
+								uint32_t offset = layout.offsets[i] + 4u * j;
+								uint32_t data = *reinterpret_cast<const uint32_t*>((pData + offset));
+								bool isBuffer = (data & 0x80000000u) != 0u;
+								uint16_t handle = static_cast<uint16_t>(data & 0xffff);
+
+								ID3D11ShaderResourceView* srv = nullptr;
+
+								if (invalid_handle != handle)
+								{
+									if (isBuffer)
+									{
+										if (!bufHandleAlloc.InUse(handle))
+											return false;
+										BufferDX11& buf = buffers[handle];
+										if (nullptr == buf.srv)
+											return false;
+										srv = buf.srv;
+									}
+									else
+									{
+										if (!texHandleAlloc.InUse(handle))
+											return false;
+										TextureDX11& tex = textures[handle];
+										srv = tex.srv;
+									}
+								}
+
+								if (SHADER_VISIBILITY_ALL == entry.ShaderVisibility ||
+									SHADER_VISIBILITY_VERTEX == entry.ShaderVisibility)
+								{
+									vsSRVs[r] = srv;
+									if (r + 1 > vsSRVCount)
+										vsSRVCount = r + 1;
+								}
+								if (SHADER_VISIBILITY_ALL == entry.ShaderVisibility ||
+									SHADER_VISIBILITY_PIXEL == entry.ShaderVisibility)
+								{
+									psSRVs[r] = srv;
+									if (r + 1 > psSRVCount)
+										psSRVCount = r + 1;
+								}
+							}
+							break;
+						case BINDING_SLOT_TYPE_SAMPLER:
+							for (uint32_t j = 0; j < entry.Count; j++)
+							{
+								uint32_t r = entry.Register + j;
+								uint32_t offset = layout.offsets[i] + 4u * j;
+								uint16_t handle = static_cast<uint16_t>(*reinterpret_cast<const uint32_t*>((pData + offset)));
+
+								ID3D11SamplerState* samp = nullptr;
+
+								if (invalid_handle != handle)
+								{
+									if (!sampHandleAlloc.InUse(handle))
+										return false;
+									samp = samplers[handle].sampler;
+								}
+
+								if (SHADER_VISIBILITY_ALL == entry.ShaderVisibility ||
+									SHADER_VISIBILITY_VERTEX == entry.ShaderVisibility)
+								{
+									vsSamps[r] = samp;
+									if (r + 1u > vsSampCount)
+										vsSampCount = r + 1u;
+								}
+								if (SHADER_VISIBILITY_ALL == entry.ShaderVisibility ||
+									SHADER_VISIBILITY_PIXEL == entry.ShaderVisibility)
+								{
+									psSamps[r] = samp;
+									if (r + 1u > psSampCount)
+										psSampCount = r + 1u;
+								}
+							}
+							break;
+						default:
+							break;
 						}
 					}
 
 					context->VSSetConstantBuffers(0, vsCBCount, vsCBs);
 					context->PSSetConstantBuffers(0, psCBCount, psCBs);
-				}
-
-				// Textures
-				{
-					ID3D11ShaderResourceView* vsSRVs[MaxShaderResourceBindingSlot];
-					ID3D11ShaderResourceView* psSRVs[MaxShaderResourceBindingSlot];
-					UINT vsSRVCount = 0, psSRVCount = 0;
-
-					for (uint32_t i = 0; i < drawcall.TextureCount; ++i)
-					{
-						ID3D11ShaderResourceView* srv = nullptr;
-
-						if (drawcall.ShaderResources[i].IsBuffer)
-						{
-							uint16_t handle = drawcall.ShaderResources[i].Buffer.id;
-#if _DEBUG
-							if (!bufHandleAlloc.InUse(handle))
-								return false;
-#endif
-							srv = buffers[handle].srv;
-						}
-						else
-						{
-							uint16_t handle = drawcall.ShaderResources[i].Texture.id;
-#if _DEBUG
-							if (!texHandleAlloc.InUse(handle))
-								return false;
-#endif
-							srv = textures[handle].srv;
-						}
-
-						if (nullptr == srv)
-							return false;
-
-						if (drawcall.ShaderResources[i].BindingVertexShader)
-						{
-							vsSRVs[vsSRVCount] = srv;
-							vsSRVCount++;
-						}
-
-						if (drawcall.ShaderResources[i].BindingPixelShader)
-						{
-							psSRVs[psSRVCount] = srv;
-							psSRVCount++;
-						}
-					}
 
 					context->VSSetShaderResources(0, vsSRVCount, vsSRVs);
 					context->PSSetShaderResources(0, psSRVCount, psSRVs);
-				}
-
-				// Samplers
-				{
-					ID3D11SamplerState* vsSamps[MaxSamplerBindingSlot];
-					ID3D11SamplerState* psSamps[MaxSamplerBindingSlot];
-					UINT vsSampCount = 0, psSampCount = 0;
-
-					for (uint32_t i = 0; i < drawcall.SamplerCount; ++i)
-					{
-						uint16_t handle = drawcall.Samplers[i].Handle.id;
-#if _DEBUG
-						if (!sampHandleAlloc.InUse(handle))
-							return false;
-#endif
-						ID3D11SamplerState* samp = samplers[handle].sampler;
-
-						if (drawcall.ShaderResources[i].BindingVertexShader)
-						{
-							vsSamps[vsSampCount] = samp;
-							vsSampCount++;
-						}
-
-						if (drawcall.ShaderResources[i].BindingPixelShader)
-						{
-							psSamps[psSampCount] = samp;
-							psSampCount++;
-						}
-					}
 
 					context->VSSetSamplers(0, vsSampCount, vsSamps);
 					context->PSSetSamplers(0, psSampCount, psSamps);
@@ -1050,12 +1128,12 @@ namespace bamboo
 			{
 				uint16_t handle = blHandleAlloc.Alloc();
 
-				if (invalid_handle == handle) 
+				if (invalid_handle == handle)
 					return BindingLayoutHandle{ invalid_handle };
 
 				BindingLayoutDX11& bl = bindingLayouts[handle];
-				bl.Reset(layout);
-				
+				bl.Reset(device, layout);
+
 				return BindingLayoutHandle{ handle };
 			}
 
@@ -1203,13 +1281,13 @@ namespace bamboo
 							tex1d->GetDesc(&texDesc);
 							tex1d->Release();
 							tex.Reset(
-								TEXTURE_1D, 
+								TEXTURE_1D,
 								format,
-								BINDING_SHADER_RESOURCE, 
-								texDesc.Width, 
-								1, 
-								1, 
-								texDesc.ArraySize, 
+								BINDING_SHADER_RESOURCE,
+								texDesc.Width,
+								1,
+								1,
+								texDesc.ArraySize,
 								texDesc.MipLevels
 							);
 						}
@@ -1234,7 +1312,7 @@ namespace bamboo
 							tex2d->Release();
 							tex.Reset(
 								((srvDesc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURECUBE) ||
-									(srvDesc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURECUBE) ? TEXTURE_CUBE : TEXTURE_2D),
+								(srvDesc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURECUBE) ? TEXTURE_CUBE : TEXTURE_2D),
 								format,
 								BINDING_SHADER_RESOURCE,
 								texDesc.Width,
@@ -1414,7 +1492,7 @@ namespace bamboo
 
 			void Draw(PipelineStateHandle stateHandle, const DrawCall& drawcall) override
 			{
-				if (stateHandle.id != internalState.id)
+				if (stateHandle.id != currentPipelineState.id)
 				{
 					if (!psoHandleAlloc.InUse(stateHandle.id))
 					{
@@ -1424,7 +1502,7 @@ namespace bamboo
 					PipelineStateDX11& state = pipelineStates[stateHandle.id];
 					SetPipelineState(state);
 
-					internalState = stateHandle;
+					currentPipelineState = stateHandle;
 				}
 
 				BindResources(drawcall);
@@ -1448,7 +1526,7 @@ namespace bamboo
 #define CLEAR_ARRAY(arr, count, alloc) \
 				for (uint16_t handle = 0; handle < count; ++handle) \
 					if (alloc.InUse(handle)) arr[handle].Release();
-				
+
 				CLEAR_ARRAY(bindingLayouts, MaxBindingLayoutCount, blHandleAlloc);
 				CLEAR_ARRAY(pipelineStates, MaxPipelineStateCount, psoHandleAlloc);
 				CLEAR_ARRAY(buffers, MaxBufferCount, bufHandleAlloc);

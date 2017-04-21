@@ -98,7 +98,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 {
 	bamboo::win32::NativeWindow win(L"Bamboo", 800, 600);
 
-	bamboo::GraphicsAPI* api = bamboo::InitGraphicsAPI(bamboo::Direct3D11, win.GetHandle());
+	bamboo::GraphicsAPI* api = bamboo::InitGraphicsAPI(bamboo::Direct3D12, win.GetHandle());
 
 	std::unique_ptr<Keyboard> keyboard = std::make_unique<Keyboard>();
 	std::unique_ptr<Mouse> mouse = std::make_unique<Mouse>();
@@ -181,15 +181,6 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	auto cb1 = api->CreateBuffer(frameConstants.size, bamboo::BINDING_CONSTANT_BUFFER);
 	api->UpdateBuffer(cb1, frameConstants.size, frameConstants.ptr);
 
-	auto cb2 = api->CreateBuffer(instanceConstants.size, bamboo::BINDING_CONSTANT_BUFFER);
-	api->UpdateBuffer(cb2, instanceConstants.size, instanceConstants.ptr);
-
-	auto cb3 = api->CreateBuffer(sizeof(DirectX::XMFLOAT4), bamboo::BINDING_CONSTANT_BUFFER);
-	{
-		float camPos[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-		api->UpdateBuffer(cb3, sizeof(DirectX::XMFLOAT4), camPos);
-	}
-
 	auto cubeMap = api->CreateTexture(L"Assets/Textures/craterlake.dds");
 
 	auto diffuseTex = api->CreateTexture(L"Assets/Textures/stone_wall.tif");
@@ -197,8 +188,29 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 	auto sampler = api->CreateSampler();
 
+	bamboo::BindingLayout blDesc1 = {};
+	blDesc1.SetEntry(0, bamboo::BINDING_SLOT_TYPE_CONSTANT, bamboo::SHADER_VISIBILITY_PIXEL, 4, 0);
+	blDesc1.SetEntry(1, bamboo::BINDING_SLOT_TYPE_CONSTANT, bamboo::SHADER_VISIBILITY_VERTEX, 32, 0);
+	blDesc1.SetEntry(2, bamboo::BINDING_SLOT_TYPE_CBV, bamboo::SHADER_VISIBILITY_VERTEX, 1, 1);
+	blDesc1.SetEntry(3, bamboo::BINDING_SLOT_TYPE_TABLE, bamboo::SHADER_VISIBILITY_PIXEL, 1, 0);
+	blDesc1.SetEntry(4, bamboo::BINDING_SLOT_TYPE_SRV, bamboo::SHADER_VISIBILITY_PIXEL, 3, 0);
+	blDesc1.SetEntry(5, bamboo::BINDING_SLOT_TYPE_TABLE, bamboo::SHADER_VISIBILITY_PIXEL, 1, 0);
+	blDesc1.SetEntry(6, bamboo::BINDING_SLOT_TYPE_SAMPLER, bamboo::SHADER_VISIBILITY_PIXEL, 1, 0);
+
+	auto bl1 = api->CreateBindingLayout(blDesc1);
+
+	bamboo::BindingLayout blDesc2 = {};
+	blDesc2.SetEntry(0, bamboo::BINDING_SLOT_TYPE_CBV, bamboo::SHADER_VISIBILITY_VERTEX, 1, 0);
+	blDesc2.SetEntry(1, bamboo::BINDING_SLOT_TYPE_TABLE, bamboo::SHADER_VISIBILITY_PIXEL, 1, 0);
+	blDesc2.SetEntry(2, bamboo::BINDING_SLOT_TYPE_SRV, bamboo::SHADER_VISIBILITY_PIXEL, 1, 0);
+	blDesc2.SetEntry(3, bamboo::BINDING_SLOT_TYPE_TABLE, bamboo::SHADER_VISIBILITY_PIXEL, 1, 0);
+	blDesc2.SetEntry(4, bamboo::BINDING_SLOT_TYPE_SAMPLER, bamboo::SHADER_VISIBILITY_PIXEL, 1, 0);
+
+	auto bl2 = api->CreateBindingLayout(blDesc2);
+
 	bamboo::PipelineState state = {};
 
+	state.BindingLayout = bl1;
 	state.VertexLayout = layout;
 	state.VertexShader = vs;
 	state.PixelShader = ps;
@@ -209,6 +221,10 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	state.DepthFunc = bamboo::COMPARISON_LESS;
 	state.PrimitiveType = bamboo::PRIMITIVE_TRIANGLES;
 
+	state.RenderTargetCount = 1;
+	state.RenderTargetFormats[0] = bamboo::FORMAT_R8G8B8A8_UNORM;
+	state.DepthStencilFormat = bamboo::FORMAT_D24_UNORM_S8_UINT;
+
 	bamboo::DrawCall drawcall1 = {};
 	drawcall1.VertexBufferCount = 1;
 	drawcall1.HasIndexBuffer = 1;
@@ -216,32 +232,30 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	drawcall1.VertexBuffers[0] = vb;
 	drawcall1.IndexBuffer = ib;
 
-	drawcall1.ConstantBufferCount = 3;
-	drawcall1.ConstantBuffers[0] = { cb1, { 1, 0, 0} };
-	drawcall1.ConstantBuffers[1] = { cb2, { 1, 0, 0 } };
-	drawcall1.ConstantBuffers[2] = { cb3, { 0, 1, 0 } };
-
-	drawcall1.TextureCount = 3;
-	drawcall1.ShaderResources[0] = { cubeMap, { 0, 1, 0 } };
-	drawcall1.ShaderResources[1] = { diffuseTex, {0, 1, 0} };
-	drawcall1.ShaderResources[2] = { normalMap, { 0, 1, 0 } };
-
-	drawcall1.SamplerCount = 1;
-	drawcall1.Samplers[0] = { sampler, {0, 1, 0} };
-
+	drawcall1.FillBindingData(4, instanceConstants.ptr, instanceConstants.size);
+	drawcall1.FillBindingData(36, cb1);
+	drawcall1.FillBindingData(37, cubeMap);
+	drawcall1.FillBindingData(38, diffuseTex);
+	drawcall1.FillBindingData(39, normalMap);
+	drawcall1.FillBindingData(40, sampler);
+	
 	drawcall1.Viewport = { 0, 0, 800, 600, 0.0f, 1.0f };
 
 	drawcall1.ElementCount = static_cast<uint32_t>(assimp.GetIndicesCount());
 
 	bamboo::PipelineState stateSkyBox = state;
+	stateSkyBox.BindingLayout = bl2;
 	stateSkyBox.VertexShader = vs_skybox;
 	stateSkyBox.PixelShader = ps_skybox;
 	stateSkyBox.CullMode = bamboo::CULL_FRONT;
 	stateSkyBox.DepthFunc = bamboo::COMPARISON_LESS_EQUAL;
 
 	bamboo::DrawCall drawcall2 = drawcall1;
-	drawcall2.ConstantBufferCount = 1;
-	drawcall2.TextureCount = 1;
+	drawcall2.ClearBindingData();
+	drawcall2.FillBindingData(0, cb1);
+	drawcall2.FillBindingData(1, cubeMap);
+	drawcall2.FillBindingData(2, sampler);
+
 
 	auto pso1 = api->CreatePipelineState(state);
 	auto pso2 = api->CreatePipelineState(stateSkyBox);
@@ -325,7 +339,8 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 			api->UpdateBuffer(cb1, frameConstants.size, frameConstants.ptr);
 
 			const DirectX::XMFLOAT3& camPos = camera.GetPosition();
-			api->UpdateBuffer(cb3, sizeof(DirectX::XMFLOAT3), &camPos);
+			drawcall1.FillBindingData(0, &camPos, sizeof(camPos));
+			//api->UpdateBuffer(cb3, sizeof(DirectX::XMFLOAT3), &camPos);
 		}
 
 		api->Clear(invalidRTHandle, clearColor);

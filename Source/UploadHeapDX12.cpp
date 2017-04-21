@@ -70,7 +70,8 @@ namespace bamboo
 
 			hEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 
-			CD3DX12_HEAP_DESC heapDesc(UploadHeapSize, D3D12_HEAP_TYPE_UPLOAD);
+			CD3DX12_HEAP_DESC heapDesc(UploadHeapSize, D3D12_HEAP_TYPE_UPLOAD, 0Ui64,
+				(D3D12_HEAP_FLAG_DENY_RT_DS_TEXTURES | D3D12_HEAP_FLAG_DENY_NON_RT_DS_TEXTURES));
 			if (FAILED(device->CreateHeap(&heapDesc, IID_PPV_ARGS(&heap))))
 			{
 				return false;
@@ -93,13 +94,21 @@ namespace bamboo
 				return false;
 			}
 
-			void* ptr = alloc->allocate(reinterpret_cast<void*>(0x10), size);
+			if (0 != rowPitch && 0 == size)
+			{
+				D3D12_RESOURCE_DESC resDesc = destRes->GetDesc();
+				UINT64 requiredSize = 0;
+				device->GetCopyableFootprints(&resDesc, 0, 1, 0, nullptr, nullptr, nullptr, &requiredSize);
+				size = static_cast<uint32_t>(requiredSize);
+			}
+
+			void* ptr = alloc->allocate(reinterpret_cast<void*>(0x10), static_cast<uint32_t>(size));
 			if (nullptr == ptr)
 			{
 				return false;
 			}
 
-			uint32_t offset = reinterpret_cast<UINT64>(ptr) - 0x10;
+			UINT64 offset = reinterpret_cast<UINT64>(ptr) - 0x10u;
 
 			ID3D12Resource* uploadRes = nullptr;
 			D3D12_RESOURCE_DESC uploadDesc = {};
@@ -123,7 +132,7 @@ namespace bamboo
 				return false;
 			}
 			
-			ringBuffer[tail].offset = offset;
+			ringBuffer[tail].offset = static_cast<uint32_t>(offset);
 			ringBuffer[tail].resource = uploadRes;
 
 			void* pData = nullptr;
@@ -146,18 +155,10 @@ namespace bamboo
 			}
 			else // for texture
 			{
-				if (0 == size)
-				{
-					D3D12_RESOURCE_DESC resDesc = destRes->GetDesc();
-					UINT64 requiredSize = 0;
-					device->GetCopyableFootprints(&resDesc, 0, 1, 0, nullptr, nullptr, nullptr, &requiredSize);
-					size = static_cast<uint32_t>(requiredSize);
-				}
-
 				D3D12_RESOURCE_DESC destDesc = destRes->GetDesc();
 				D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint =
 				{
-					offset,
+					0,
 					CD3DX12_SUBRESOURCE_FOOTPRINT(destDesc, rowPitch)
 				};
 				CD3DX12_TEXTURE_COPY_LOCATION srcLoc(uploadRes, footprint);
@@ -208,7 +209,7 @@ namespace bamboo
 
 			while (head != completed)
 			{
-				uint32_t addr = ringBuffer[head].offset;
+				UINT64 addr = ringBuffer[head].offset;
 				alloc->deallocate(nullptr, reinterpret_cast<void*>(addr));
 				ringBuffer[head].resource->Release();
 

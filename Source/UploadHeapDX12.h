@@ -17,12 +17,12 @@ namespace bamboo
 	namespace dx12
 	{
 		constexpr size_t UploadHeapSize = 32 * 1024 * 1024; // 32 MB
-		constexpr size_t UploadHeapBufferMinSize = 4096; // 4 KB
+		constexpr size_t UploadHeapBufferMinSize = 64 * 1024; // 64 KB
 		constexpr size_t UploadHeapQueueSize = 1024;
 
 		struct UploadHeapDX12
 		{
-			typedef bamboo::memory::BuddyAllocator<UploadHeapSize, 4096> alloc_t;
+			typedef bamboo::memory::BuddyAllocator<UploadHeapSize, UploadHeapBufferMinSize> alloc_t;
 
 			UploadHeapDX12()
 				:
