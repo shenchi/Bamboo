@@ -15,7 +15,7 @@ namespace bamboo
 		struct BuddyAllocator
 		{
 			// size of tree data
-			static constexpr unsigned int treeSize = memSize / minSize / 8 * 2;
+			static constexpr unsigned int treeSize = memSize / minSize / 8 * 4;
 
 			static constexpr unsigned int flag_unused = 0;      // the node is free
 			static constexpr unsigned int flag_used = 1;        // the node is allocated as a whole
@@ -59,6 +59,7 @@ namespace bamboo
 			{
 				unsigned int a = (index & 3) << 1;
 				(space[index >> 2] &= ~(3 << a)) |= ((flag & 3) << a);
+				assert((index >> 2) < treeSize);
 			}
 
 			void initialize()

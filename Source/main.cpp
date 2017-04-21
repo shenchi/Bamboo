@@ -190,8 +190,8 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 	bamboo::BindingLayout blDesc1 = {};
 	blDesc1.SetEntry(0, bamboo::BINDING_SLOT_TYPE_CONSTANT, bamboo::SHADER_VISIBILITY_PIXEL, 4, 0);
-	blDesc1.SetEntry(1, bamboo::BINDING_SLOT_TYPE_CONSTANT, bamboo::SHADER_VISIBILITY_VERTEX, 32, 0);
-	blDesc1.SetEntry(2, bamboo::BINDING_SLOT_TYPE_CBV, bamboo::SHADER_VISIBILITY_VERTEX, 1, 1);
+	blDesc1.SetEntry(1, bamboo::BINDING_SLOT_TYPE_CONSTANT, bamboo::SHADER_VISIBILITY_VERTEX, 32, 1);
+	blDesc1.SetEntry(2, bamboo::BINDING_SLOT_TYPE_CBV, bamboo::SHADER_VISIBILITY_VERTEX, 1, 0);
 	blDesc1.SetEntry(3, bamboo::BINDING_SLOT_TYPE_TABLE, bamboo::SHADER_VISIBILITY_PIXEL, 1, 0);
 	blDesc1.SetEntry(4, bamboo::BINDING_SLOT_TYPE_SRV, bamboo::SHADER_VISIBILITY_PIXEL, 3, 0);
 	blDesc1.SetEntry(5, bamboo::BINDING_SLOT_TYPE_TABLE, bamboo::SHADER_VISIBILITY_PIXEL, 1, 0);
@@ -333,8 +333,9 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		}
 
 		{
-			*reinterpret_cast<XMFLOAT4X4*>(frameConstants.ptr) = camera.GetViewMatrix();
-			*(reinterpret_cast<XMFLOAT4X4*>(frameConstants.ptr) + 1) = camera.GetProjectionMatrix();
+			XMFLOAT4X4* matrix = reinterpret_cast<XMFLOAT4X4*>(frameConstants.ptr);
+			*matrix = camera.GetViewMatrix();
+			*(matrix + 1) = camera.GetProjectionMatrix();
 
 			api->UpdateBuffer(cb1, frameConstants.size, frameConstants.ptr);
 

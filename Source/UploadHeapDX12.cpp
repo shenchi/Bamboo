@@ -10,6 +10,136 @@ namespace bamboo
 	namespace dx12
 	{
 
+#pragma region Sync Upload Heap
+
+		bool UploadHeapSyncDX12::Init(ID3D12Device * device, ID3D12GraphicsCommandList * cmdList)
+		{
+			this->device = device;
+			this->cmdList = cmdList;
+
+			CD3DX12_HEAP_DESC heapDesc(UploadHeapSize, D3D12_HEAP_TYPE_UPLOAD, 0Ui64,
+				(D3D12_HEAP_FLAG_DENY_RT_DS_TEXTURES | D3D12_HEAP_FLAG_DENY_NON_RT_DS_TEXTURES));
+			if (FAILED(device->CreateHeap(&heapDesc, IID_PPV_ARGS(&heap))))
+			{
+				return false;
+			}
+
+			alloc = alloc_t::create(treeMem);
+
+			bufferCount = 0;
+			return true;
+		}
+
+		bool UploadHeapSyncDX12::UploadResource(ID3D12Resource* destRes, uint32_t firstSubRes, uint32_t subResCount, D3D12_SUBRESOURCE_DATA* data)
+		{
+			if (bufferCount >= UploadHeapQueueSize)
+				return false;
+
+			uint32_t bufIdx = bufferCount;
+
+			UINT64 size = GetRequiredIntermediateSize(destRes, firstSubRes, subResCount);
+			/*if (0 != rowPitch && 0 == size)
+			{
+				D3D12_RESOURCE_DESC resDesc = destRes->GetDesc();
+				UINT64 requiredSize = 0;
+				device->GetCopyableFootprints(&resDesc, 0, 1, 0, nullptr, nullptr, nullptr, &requiredSize);
+				size = static_cast<uint32_t>(requiredSize);
+			}*/
+
+			void* ptr = alloc->allocate(reinterpret_cast<void*>(0x10), static_cast<uint32_t>(size));
+			if (nullptr == ptr)
+			{
+				return false;
+			}
+
+			UINT64 offset = reinterpret_cast<UINT64>(ptr) - 0x10u;
+
+			ID3D12Resource* uploadRes = nullptr;
+			D3D12_RESOURCE_DESC uploadDesc = {};
+			uploadDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+			uploadDesc.Width = size;
+			uploadDesc.Height = 1;
+			uploadDesc.DepthOrArraySize = 1;
+			uploadDesc.MipLevels = 1;
+			uploadDesc.SampleDesc.Count = 1;
+			uploadDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+			if (FAILED(device->CreatePlacedResource(
+				heap,
+				offset,
+				&uploadDesc,
+				D3D12_RESOURCE_STATE_GENERIC_READ,
+				nullptr,
+				IID_PPV_ARGS(&uploadRes))))
+			{
+				alloc->deallocate(nullptr, reinterpret_cast<void*>(offset));
+				return false;
+			}
+
+			buffers[bufIdx].offset = static_cast<uint32_t>(offset);
+			buffers[bufIdx].resource = uploadRes;
+
+			//  MARK
+
+			void* pData = nullptr;
+			D3D12_RANGE range = { 0, 0 };
+			if (FAILED(uploadRes->Map(0, &range, &pData)))
+			{
+				return false;
+			}
+			memcpy(pData, data, size);
+			uploadRes->Unmap(0, nullptr);
+
+
+			/*cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(destRes,
+				D3D12_RESOURCE_STATE_COMMON,
+				D3D12_RESOURCE_STATE_COPY_DEST));*/
+
+			if (0 == rowPitch) // for buffer
+			{
+				cmdList->CopyBufferRegion(destRes, 0, uploadRes, 0, size);
+			}
+			else // for texture
+			{
+				D3D12_RESOURCE_DESC destDesc = destRes->GetDesc();
+				D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint =
+				{
+					0,
+					CD3DX12_SUBRESOURCE_FOOTPRINT(destDesc, rowPitch)
+				};
+				CD3DX12_TEXTURE_COPY_LOCATION srcLoc(uploadRes, footprint);
+				CD3DX12_TEXTURE_COPY_LOCATION destLoc(destRes, 0);
+
+				cmdList->CopyTextureRegion(&destLoc, 0, 0, 0, &srcLoc, nullptr);
+			}
+
+			/*cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(destRes,
+				D3D12_RESOURCE_STATE_COPY_DEST,
+				D3D12_RESOURCE_STATE_COMMON));*/
+
+			bufferCount++;
+
+			return true;
+		}
+
+		void UploadHeapSyncDX12::Clear()
+		{
+			for (uint32_t i = 0; i < bufferCount; i++)
+			{
+				UINT64 addr = buffers[i].offset;
+				alloc->deallocate(nullptr, reinterpret_cast<void*>(addr));
+				buffers[i].resource->Release();
+			}
+			bufferCount = 0;
+		}
+
+
+#pragma endregion
+
+
+#pragma region Async Upload Heap
+
+
 		UploadHeapDX12::~UploadHeapDX12()
 		{
 			WaitForExecution();
@@ -131,7 +261,7 @@ namespace bamboo
 				alloc->deallocate(nullptr, reinterpret_cast<void*>(offset));
 				return false;
 			}
-			
+
 			ringBuffer[tail].offset = static_cast<uint32_t>(offset);
 			ringBuffer[tail].resource = uploadRes;
 
@@ -148,7 +278,7 @@ namespace bamboo
 			cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(destRes,
 				D3D12_RESOURCE_STATE_COMMON,
 				D3D12_RESOURCE_STATE_COPY_DEST));
-			
+
 			if (0 == rowPitch) // for buffer
 			{
 				cmdList->CopyBufferRegion(destRes, 0, uploadRes, 0, size);
@@ -166,7 +296,7 @@ namespace bamboo
 
 				cmdList->CopyTextureRegion(&destLoc, 0, 0, 0, &srcLoc, nullptr);
 			}
-			
+
 			cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(destRes,
 				D3D12_RESOURCE_STATE_COPY_DEST,
 				D3D12_RESOURCE_STATE_COMMON));
@@ -217,5 +347,8 @@ namespace bamboo
 			}
 		}
 
+#pragma endregion
+
 	}
+
 }

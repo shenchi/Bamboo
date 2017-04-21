@@ -20,6 +20,8 @@
 #define CE(x, e) if (S_OK != (x)) return (e);
 #define CHECKED(x) if (S_OK != (x)) return -1;
 
+#define USING_SYNC_UPLOAD_HEAP 1
+
 namespace bamboo
 {
 	namespace dx12
@@ -103,6 +105,13 @@ namespace bamboo
 			D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE,
 		};
 
+		D3D12_PRIMITIVE_TOPOLOGY TopologyTable[] =
+		{
+			D3D_PRIMITIVE_TOPOLOGY_POINTLIST,
+			D3D_PRIMITIVE_TOPOLOGY_LINELIST,
+			D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+		};
+
 		uint32_t PixelFormatSizeTable[] =
 		{
 			0,
@@ -173,20 +182,24 @@ namespace bamboo
 		struct PipelineStateDX12
 		{
 			ID3D12PipelineState*		state;
+			BindingLayoutHandle			bindingLayout;
+			D3D12_PRIMITIVE_TOPOLOGY	topology;
 
 			PipelineStateDX12()
 				:
-				state(nullptr)
+				state(nullptr),
+				bindingLayout{ invalid_handle }
 			{}
 		};
 
 		struct BufferDX12
 		{
 			ID3D12Resource*				buffer;
-			uint16_t					cbv;
-			uint16_t					srv;
+			//uint16_t					cbv;
+			//uint16_t					srv;
 			D3D12_RESOURCE_STATES		state;
 
+			uint32_t					bindFlags;
 			uint32_t					size;
 			uint32_t					stride;
 			PixelFormat					format;
@@ -194,8 +207,12 @@ namespace bamboo
 			BufferDX12()
 				:
 				buffer(nullptr),
-				srv(invalid_handle),
+				//srv(invalid_handle),
+#if defined(USING_SYNC_UPLOAD_HEAP)
+				state(D3D12_RESOURCE_STATE_COPY_DEST),
+#else
 				state(D3D12_RESOURCE_STATE_COMMON),
+#endif
 				size(0),
 				stride(0),
 				format(FORMAT_AUTO)
@@ -205,7 +222,7 @@ namespace bamboo
 		struct TextureDX12
 		{
 			ID3D12Resource*				texture;
-			uint16_t					srv;
+			//uint16_t					srv;
 			uint16_t					rtv;
 			uint16_t					dsv;
 			D3D12_RESOURCE_STATES		state;
@@ -221,10 +238,14 @@ namespace bamboo
 			TextureDX12()
 				:
 				texture(nullptr),
-				srv(invalid_handle),
+				//srv(invalid_handle),
 				rtv(invalid_handle),
 				dsv(invalid_handle),
+#if defined(USING_SYNC_UPLOAD_HEAP)
+				state(D3D12_RESOURCE_STATE_COPY_DEST),
+#else
 				state(D3D12_RESOURCE_STATE_COMMON),
+#endif
 				format(FORMAT_AUTO),
 				width(0),
 				height(0),
@@ -236,12 +257,12 @@ namespace bamboo
 
 		struct SamplerDX12
 		{
-			uint32_t				sampler;
+			//uint32_t				sampler;
 			D3D12_SAMPLER_DESC		desc;
 
 			SamplerDX12()
 				:
-				sampler(invalid_handle),
+				//sampler(invalid_handle),
 				desc{}
 			{}
 		};
@@ -282,7 +303,7 @@ namespace bamboo
 
 			HandleAlloc<RTVHeapSize>		rtvHeapAlloc;
 			HandleAlloc<DSVHeapSize>		dsvHeapAlloc;
-			HandleAlloc<SRVHeapSize>		srvHeapAlloc;
+			//HandleAlloc<SRVHeapSize>		srvHeapAlloc;
 			HandleAlloc<SamplerHeapSize>	sampHeapAlloc;
 
 			ID3D12DescriptorHeap*		rtvHeap;
@@ -295,6 +316,9 @@ namespace bamboo
 			UINT						srvHeapInc;
 			UINT						sampHeapInc;
 
+			UINT						srvHeapIndex;
+			UINT						sampHeapIndex;
+
 			BindingLayoutDX12			bindingLayouts[MaxBindingLayoutCount];
 			PipelineStateDX12			pipelineStates[MaxPipelineStateCount];
 			BufferDX12					buffers[MaxBufferCount];
@@ -303,7 +327,14 @@ namespace bamboo
 			ShaderDX12					vertexShaders[MaxVertexShaderCount];
 			ShaderDX12					pixelShaders[MaxPixelShaderCount];
 
+			BindingLayoutHandle			currentBindingLayout;
+			PipelineStateHandle			currentPipelineState;
+
+#if defined(USING_SYNC_UPLOAD_HEAP)
+			UploadHeapSyncDX12			uploadHeap;
+#else
 			UploadHeapDX12				uploadHeap;
+#endif
 
 			int Init(void* windowHandle)
 			{
@@ -319,10 +350,17 @@ namespace bamboo
 
 				InitPipelineStates();
 
+#if defined(USING_SYNC_UPLOAD_HEAP)
+				if (!uploadHeap.Init(device, cmdList))
+#else
 				if (!uploadHeap.Init(device))
+#endif
 				{
 					return -1;
 				}
+
+				srvHeapIndex = 0;
+				sampHeapIndex = 0;
 
 				return 0;
 			}
@@ -428,15 +466,17 @@ namespace bamboo
 					D3D12_DESCRIPTOR_HEAP_DESC desc = {};
 					desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 					desc.NumDescriptors = SRVHeapSize;
+					desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 					CHECKED(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&srvHeap)));
 					srvHeapInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-					srvHeapAlloc.Reset();
+					//srvHeapAlloc.Reset();
 				}
 
 				{
 					D3D12_DESCRIPTOR_HEAP_DESC desc = {};
 					desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
 					desc.NumDescriptors = SamplerHeapSize;
+					desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 					CHECKED(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&sampHeap)));
 					sampHeapInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
 					sampHeapAlloc.Reset();
@@ -447,6 +487,8 @@ namespace bamboo
 				CHECKED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAlloc, nullptr, IID_PPV_ARGS(&cmdList)));
 
 				//cmdList->Close();
+				ID3D12DescriptorHeap* heaps[] = { srvHeap, sampHeap };
+				cmdList->SetDescriptorHeaps(2, heaps);
 
 				frameIndex = 1;
 				CHECKED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)));
@@ -463,7 +505,9 @@ namespace bamboo
 				{
 					ID3D12Resource* res = nullptr;
 					CHECKED(swapChain->GetBuffer(i, IID_PPV_ARGS(&res)));
-					uint16_t handle = InternalCreateTexture(res, BINDING_RENDER_TARGET, D3D12_RESOURCE_STATE_RENDER_TARGET);
+					uint16_t handle = InternalCreateTexture(res, BINDING_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+						/*i == backBufferIndex ? D3D12_RESOURCE_STATE_PRESENT :
+						D3D12_RESOURCE_STATE_RENDER_TARGET);*/
 					assert(handle == i);
 				}
 
@@ -498,7 +542,426 @@ namespace bamboo
 
 			void InitPipelineStates()
 			{
+				currentBindingLayout.id = invalid_handle;
+				currentPipelineState.id = invalid_handle;
+			}
 
+
+			inline void TransistResource(ID3D12Resource* res, D3D12_RESOURCE_STATES& current, D3D12_RESOURCE_STATES dest)
+			{
+				if (dest != current)
+				{
+					cmdList->ResourceBarrier(
+						1,
+						&CD3DX12_RESOURCE_BARRIER::Transition(
+							res,
+							current,
+							dest
+						)
+					);
+					current = dest;
+				}
+			}
+
+			bool SetPipelineState(PipelineStateDX12& state)
+			{
+				cmdList->SetPipelineState(state.state);
+
+				if (state.bindingLayout.id != currentBindingLayout.id)
+				{
+					if (!blHandleAlloc.InUse(state.bindingLayout.id))
+						return false;
+
+					BindingLayoutDX12& layout = bindingLayouts[state.bindingLayout.id];
+					cmdList->SetGraphicsRootSignature(layout.rootSig);
+					currentBindingLayout = state.bindingLayout;
+				}
+
+				cmdList->IASetPrimitiveTopology(state.topology);
+
+				return true;
+			}
+
+			bool BindResources(const DrawCall& drawcall)
+			{
+				// Input Assembly
+				if (drawcall.VertexBufferCount > 0)
+				{
+					D3D12_VERTEX_BUFFER_VIEW vbvs[MaxVertexBufferBindingSlot];
+
+					for (size_t i = 0; i < drawcall.VertexBufferCount; ++i)
+					{
+						uint16_t handle = drawcall.VertexBuffers[i].id;
+#if _DEBUG
+						if (!bufHandleAlloc.InUse(handle))
+							return false;
+#endif
+						auto& buf = buffers[handle];
+						if ((buf.bindFlags & BINDING_VERTEX_BUFFER) == 0)
+							return false;
+
+						TransistResource(buf.buffer, buf.state, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+						vbvs[i].BufferLocation = buf.buffer->GetGPUVirtualAddress();
+						vbvs[i].SizeInBytes = buf.size;
+						vbvs[i].StrideInBytes = buf.stride;
+					}
+
+					cmdList->IASetVertexBuffers(0, drawcall.VertexBufferCount, vbvs);
+				}
+
+				if (drawcall.HasIndexBuffer)
+				{
+					uint16_t handle = drawcall.IndexBuffer.id;
+#if _DEBUG
+					if (!bufHandleAlloc.InUse(handle))
+						return false;
+#endif
+					auto& buf = buffers[handle];
+					if ((buf.bindFlags & BINDING_INDEX_BUFFER) == 0)
+						return false;
+
+					TransistResource(buf.buffer, buf.state, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+					D3D12_INDEX_BUFFER_VIEW ibv = {};
+					ibv.BufferLocation = buf.buffer->GetGPUVirtualAddress();
+					ibv.SizeInBytes = buf.size;
+					ibv.Format = (buf.stride == 2 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT);
+
+					cmdList->IASetIndexBuffer(&ibv);
+				}
+				/////
+
+				// Rasterizer
+				{
+					D3D12_VIEWPORT vp =
+					{
+						drawcall.Viewport.X,
+						drawcall.Viewport.Y,
+						drawcall.Viewport.Width,
+						drawcall.Viewport.Height,
+						drawcall.Viewport.ZMin,
+						drawcall.Viewport.ZMax
+					};
+
+					cmdList->RSSetViewports(1, &vp);
+
+					D3D12_RECT rect = { 0, 0, width, height };
+					cmdList->RSSetScissorRects(1, &rect);
+				}
+
+				{
+					uint16_t handle = currentBindingLayout.id;
+					if (!blHandleAlloc.InUse(handle))
+					{
+						return false;
+					}
+
+					BindingLayoutDX12& layout = bindingLayouts[handle];
+					const uint8_t* pData = reinterpret_cast<const uint8_t*>(drawcall.ResourceBindingData);
+
+					for (size_t i = 0; i < layout.entryCount; i++)
+					{
+						auto& entry = layout.layout.table[i];
+						switch (entry.Type)
+						{
+						case BINDING_SLOT_TYPE_CONSTANT:
+							cmdList->SetGraphicsRoot32BitConstants(layout.slotId[i], entry.Count, pData + layout.offsets[i], 0);
+							break;
+						case BINDING_SLOT_TYPE_CBV:
+							(void*)0;
+							{
+								uint16_t handle = static_cast<uint16_t>(*reinterpret_cast<const uint32_t*>((pData + layout.offsets[i])));
+
+
+								if (invalid_handle != handle)
+								{
+									if (!bufHandleAlloc.InUse(handle))
+										return false;
+									BufferDX12& buf = buffers[handle];
+									if ((buf.bindFlags & BINDING_CONSTANT_BUFFER) == 0)
+										return false;
+
+									TransistResource(buf.buffer, buf.state, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+									cmdList->SetGraphicsRootConstantBufferView(layout.slotId[i], buf.buffer->GetGPUVirtualAddress());
+								}
+
+							}
+							break;
+						case BINDING_SLOT_TYPE_SRV:
+							(void*)0;
+							{
+								uint32_t offset = layout.offsets[i];
+								uint32_t data = *reinterpret_cast<const uint32_t*>((pData + offset));
+								bool isBuffer = (data & 0x80000000u) != 0u;
+								uint16_t handle = static_cast<uint16_t>(data & 0xffff);
+
+								if (invalid_handle != handle)
+								{
+									if (isBuffer)
+									{
+										if (!bufHandleAlloc.InUse(handle))
+											return false;
+										BufferDX12& buf = buffers[handle];
+										if ((buf.bindFlags & BINDING_SHADER_RESOURCE) == 0)
+											return false;
+
+										TransistResource(buf.buffer, buf.state, 
+											entry.ShaderVisibility == SHADER_VISIBILITY_PIXEL ?
+											D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE :
+											D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
+										);
+
+										cmdList->SetGraphicsRootShaderResourceView(layout.slotId[i], buf.buffer->GetGPUVirtualAddress());
+									}
+									else
+									{
+										/*if (!texHandleAlloc.InUse(handle))
+											return false;
+										TextureDX12& tex = textures[handle];
+										cmdList->SetGraphicsRootShaderResourceView(layout.slotId[i], tex.texture->g);*/
+										return false;
+									}
+								}
+							}
+							break;
+						case BINDING_SLOT_TYPE_TABLE:
+							(void*)0;
+							{
+								bool isSamplerTable = false;
+								bool isCBVSRVTable = false;
+
+								uint32_t handleIdx = 0;
+								for (uint32_t iRange = 0; iRange < entry.Count; iRange++)
+								{
+									auto& subEntry = layout.layout.table[i + iRange + 1];
+
+
+									if (subEntry.Type == BINDING_SLOT_TYPE_SAMPLER)
+									{
+										if (isCBVSRVTable)
+											return false;
+										isSamplerTable = true;
+
+										for (uint32_t iRangeEntry = 0; iRangeEntry < subEntry.Count; iRangeEntry++)
+										{
+											uint32_t offset = layout.offsets[i + iRange + 1] + 4u * iRangeEntry;
+											uint16_t handle = static_cast<uint16_t>(*reinterpret_cast<const uint32_t*>((pData + offset)));
+
+											CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHandle(sampHeap->GetCPUDescriptorHandleForHeapStart(), sampHeapIndex + handleIdx, sampHeapInc);
+											handleIdx++;
+
+											if (invalid_handle != handle)
+											{
+												if (!sampHandleAlloc.InUse(handle))
+													return false;
+
+												device->CreateSampler(&(samplers[handle].desc), cpuHandle);
+											}
+											else
+											{
+												D3D12_SAMPLER_DESC desc = {};
+
+												desc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+												desc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+												desc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+												desc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+												desc.MaxLOD = D3D12_FLOAT32_MAX;
+												desc.MaxAnisotropy = 1;
+
+												device->CreateSampler(&desc, cpuHandle);
+											}
+
+
+										} // for loop - iRangeEntry
+									}
+									else
+									{
+										if (isSamplerTable)
+											return false;
+										isCBVSRVTable = true;
+
+										for (uint32_t iRangeEntry = 0; iRangeEntry < subEntry.Count; iRangeEntry++)
+										{
+											uint32_t offset = layout.offsets[i + iRange + 1] + 4u * iRangeEntry;
+
+											uint32_t data = *reinterpret_cast<const uint32_t*>((pData + offset));
+											bool isBuffer = (data & 0x80000000u) != 0u;
+											uint16_t handle = static_cast<uint16_t>(data & 0xffff);
+
+											CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHandle(srvHeap->GetCPUDescriptorHandleForHeapStart(), srvHeapIndex + handleIdx, srvHeapInc);
+											handleIdx++;
+
+											if (subEntry.Type == BINDING_SLOT_TYPE_CBV)
+											{
+												if (invalid_handle != handle)
+												{
+													if (!bufHandleAlloc.InUse(handle))
+														return false;
+													BufferDX12& buf = buffers[handle];
+													if ((buf.bindFlags & BINDING_CONSTANT_BUFFER) == 0)
+														return false;
+
+
+													TransistResource(buf.buffer, buf.state, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+
+													D3D12_CONSTANT_BUFFER_VIEW_DESC desc = {};
+													desc.BufferLocation = buf.buffer->GetGPUVirtualAddress();
+													desc.SizeInBytes = static_cast<UINT>(buf.size);
+
+													device->CreateConstantBufferView(&desc, cpuHandle);
+												}
+												else
+												{
+													device->CreateConstantBufferView(nullptr, cpuHandle);
+												}
+											}
+											else if (subEntry.Type == BINDING_SLOT_TYPE_SRV)
+											{
+												if (isBuffer)
+												{
+													if (invalid_handle != handle)
+													{
+														if (!bufHandleAlloc.InUse(handle))
+															return false;
+														BufferDX12& buf = buffers[handle];
+														if ((buf.bindFlags & BINDING_SHADER_RESOURCE) == 0)
+															return false;
+
+														TransistResource(buf.buffer, buf.state,
+															entry.ShaderVisibility == SHADER_VISIBILITY_PIXEL ?
+															D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE :
+															D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
+														);
+
+														D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
+
+														desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+														desc.Format = PixelFormatTable[buf.format];
+														desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+														desc.Buffer.FirstElement = 0;
+														desc.Buffer.NumElements = buf.size / buf.stride;
+														desc.Buffer.StructureByteStride = buf.stride;
+														desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+
+														device->CreateShaderResourceView(buf.buffer, &desc, cpuHandle);
+													}
+													else
+													{
+														D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
+														desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+														device->CreateShaderResourceView(nullptr, &desc, cpuHandle);
+													}
+												}
+												else
+												{
+													if (invalid_handle != handle)
+													{
+														if (!texHandleAlloc.InUse(handle))
+															return false;
+														TextureDX12& tex = textures[handle];
+
+														TransistResource(tex.texture, tex.state,
+															entry.ShaderVisibility == SHADER_VISIBILITY_PIXEL ?
+															D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE :
+															D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
+														);
+
+														device->CreateShaderResourceView(tex.texture, nullptr, cpuHandle);
+													}
+													else
+													{
+														D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
+														desc.ViewDimension = D3D12_SRV_DIMENSION_UNKNOWN;
+														device->CreateShaderResourceView(nullptr, &desc, cpuHandle);
+													}
+												}
+											}
+
+										} // for loop - iRangeEntry
+
+									} // if - sampler or cbvsrv
+
+								} // for loop - iRange
+
+								if (isSamplerTable == isCBVSRVTable)
+									return false;
+
+								if (isSamplerTable)
+								{
+									CD3DX12_GPU_DESCRIPTOR_HANDLE gpuHandle(sampHeap->GetGPUDescriptorHandleForHeapStart(), sampHeapIndex, sampHeapInc);
+									sampHeapIndex += handleIdx;
+
+									cmdList->SetGraphicsRootDescriptorTable(layout.slotId[i], gpuHandle);
+								}
+								else
+								{
+									CD3DX12_GPU_DESCRIPTOR_HANDLE gpuHandle(srvHeap->GetGPUDescriptorHandleForHeapStart(), srvHeapIndex, srvHeapInc);
+									srvHeapIndex += handleIdx;
+
+									cmdList->SetGraphicsRootDescriptorTable(layout.slotId[i], gpuHandle);
+								}
+
+								i += entry.Count;
+							}
+							break;
+						default:
+							break;
+						}
+					}
+
+				}
+				//cmdList->SetDescriptorHeaps
+				// Render Target
+				if (drawcall.RenderTargetCount > 0 || drawcall.HasDepthStencil)
+				{
+					D3D12_CPU_DESCRIPTOR_HANDLE rtvs[MaxRenderTargetBindingSlot];
+					D3D12_CPU_DESCRIPTOR_HANDLE dsv;
+
+					for (size_t i = 0; i < drawcall.RenderTargetCount; ++i)
+					{
+						uint16_t handle = drawcall.RenderTargets[i].id;
+#if _DEBUG
+						if (!texHandleAlloc.InUse(handle))
+							return false;
+#endif
+						auto& tex = textures[handle];
+						if (!rtvHeapAlloc.InUse(tex.rtv))
+							return false;
+
+						TransistResource(tex.texture, tex.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+						rtvs[i] = CD3DX12_CPU_DESCRIPTOR_HANDLE(rtvHeap->GetCPUDescriptorHandleForHeapStart(), tex.rtv, rtvHeapInc);
+					}
+
+					if (drawcall.HasDepthStencil)
+					{
+						uint16_t handle = drawcall.DepthStencil.id;
+#if _DEBUG
+						if (!texHandleAlloc.InUse(handle))
+							return false;
+#endif
+						auto& tex = textures[handle];
+						if (!dsvHeapAlloc.InUse(tex.dsv))
+							return false;
+
+						TransistResource(tex.texture, tex.state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+
+						dsv = CD3DX12_CPU_DESCRIPTOR_HANDLE(dsvHeap->GetCPUDescriptorHandleForHeapStart(), tex.dsv, dsvHeapInc);
+					}
+
+					cmdList->OMSetRenderTargets(drawcall.RenderTargetCount, rtvs, FALSE, &dsv);
+				}
+				else
+				{
+					TransistResource(textures[backBufferIndex].texture, textures[backBufferIndex].state, D3D12_RESOURCE_STATE_RENDER_TARGET);
+					TransistResource(textures[2].texture, textures[2].state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+
+					D3D12_CPU_DESCRIPTOR_HANDLE rtv = CD3DX12_CPU_DESCRIPTOR_HANDLE(rtvHeap->GetCPUDescriptorHandleForHeapStart(), textures[backBufferIndex].rtv, rtvHeapInc);
+					D3D12_CPU_DESCRIPTOR_HANDLE dsv = CD3DX12_CPU_DESCRIPTOR_HANDLE(dsvHeap->GetCPUDescriptorHandleForHeapStart(), textures[2].dsv, dsvHeapInc);
+
+					cmdList->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+				}
+
+				return true;
 			}
 
 #pragma region resource creation
@@ -536,14 +999,15 @@ namespace bamboo
 						}
 
 						layout.offsets[i] = offset;
+						layout.slotId[i] = paramIdx;
+
 						uint32_t count = (
 							entry.Type == BINDING_SLOT_TYPE_TABLE ?
 							0 : (entry.Count == 0 ? 1 : entry.Count));
 						uint32_t size = 4 * count;
 						offset += size;
-						layout.slotId[i] = paramIdx;
 
-						auto& par = params[paramIdx++];
+						auto& par = params[paramIdx];
 
 						if (entry.Type == BINDING_SLOT_TYPE_CONSTANT)
 						{
@@ -576,6 +1040,11 @@ namespace bamboo
 							{
 								auto& range = ranges[rangeIdx + j];
 								auto& subEntry = layoutDesc.table[i + j + 1];
+
+								layout.offsets[i + j + 1] = offset;
+								offset += subEntry.Count * 4u;
+								//layout.slotId[i + j + 1] = paramIdx;
+
 								if (subEntry.Type == BINDING_SLOT_TYPE_CBV)
 								{
 									range.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV,
@@ -604,16 +1073,18 @@ namespace bamboo
 									return invalid_handle;
 								}
 							}
-							
+
 							par.InitAsDescriptorTable(
-								entry.Count, 
-								&ranges[rangeIdx], 
+								entry.Count,
+								&ranges[rangeIdx],
 								ShaderVisibilityTable[entry.ShaderVisibility]
 							);
 
 							rangeIdx += entry.Count;
 							i += entry.Count;
 						}
+
+						paramIdx++;
 					}
 
 					if (i == MaxBindingLayoutEntry)
@@ -653,6 +1124,7 @@ namespace bamboo
 			void InternalResetPipelineState(PipelineStateDX12& state)
 			{
 				RELEASE(state.state);
+				state.bindingLayout.id = invalid_handle;
 			}
 
 			uint16_t InternalCreatePipelineState(const PipelineState& stateDesc)
@@ -674,6 +1146,7 @@ namespace bamboo
 						return invalid_handle;
 					}
 
+					state.bindingLayout = stateDesc.BindingLayout;
 					desc.pRootSignature = bindingLayouts[stateDesc.BindingLayout.id].rootSig;
 
 					uint16_t vsHandle = stateDesc.VertexShader.id;
@@ -736,6 +1209,7 @@ namespace bamboo
 					desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
 					desc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
 					desc.PrimitiveTopologyType = TopologyTypeTable[stateDesc.PrimitiveType];
+					state.topology = TopologyTable[stateDesc.PrimitiveType];
 					desc.NumRenderTargets = stateDesc.RenderTargetCount;
 					for (size_t i = 0; i < desc.NumRenderTargets; i++)
 					{
@@ -743,6 +1217,14 @@ namespace bamboo
 					}
 					desc.DSVFormat = PixelFormatTable[stateDesc.DepthStencilFormat];
 					desc.SampleDesc.Count = 1;
+
+					{
+						desc.RasterizerState.CullMode = static_cast<D3D12_CULL_MODE>(stateDesc.CullMode + 1);
+
+						desc.DepthStencilState.DepthEnable = stateDesc.DepthEnable;
+						desc.DepthStencilState.DepthWriteMask = static_cast<D3D12_DEPTH_WRITE_MASK>(stateDesc.DepthWrite);
+						desc.DepthStencilState.DepthFunc = static_cast<D3D12_COMPARISON_FUNC>(stateDesc.DepthFunc + 1);
+					}
 				}
 
 				if (FAILED(device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&(state.state)))))
@@ -768,8 +1250,8 @@ namespace bamboo
 			void InternalResetBuffer(BufferDX12& buf)
 			{
 				RELEASE(buf.buffer);
-				FREE_HANDLE(buf.cbv, srvHeapAlloc);
-				FREE_HANDLE(buf.srv, srvHeapAlloc);
+				//FREE_HANDLE(buf.cbv, srvHeapAlloc);
+				//FREE_HANDLE(buf.srv, srvHeapAlloc);
 			}
 
 			uint16_t InternalCreateBuffer(uint32_t bindFlags, size_t size)
@@ -779,6 +1261,8 @@ namespace bamboo
 					return handle;
 
 				BufferDX12& buf = buffers[handle];
+
+				buf.bindFlags = bindFlags;
 
 				D3D12_RESOURCE_FLAGS resFlags = D3D12_RESOURCE_FLAG_NONE;
 				D3D12_HEAP_FLAGS heapFlags = D3D12_HEAP_FLAG_NONE;// D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS;
@@ -803,7 +1287,7 @@ namespace bamboo
 				}
 
 
-				if (bindFlags & BINDING_CONSTANT_BUFFER)
+				/*if (bindFlags & BINDING_CONSTANT_BUFFER)
 				{
 					buf.cbv = srvHeapAlloc.Alloc();
 					if (invalid_handle == buf.cbv)
@@ -823,9 +1307,9 @@ namespace bamboo
 					desc.SizeInBytes = static_cast<UINT>(size);
 
 					device->CreateConstantBufferView(&desc, cbvHandle);
-				}
+				}*/
 
-				if (bindFlags & BINDING_SHADER_RESOURCE)
+				/*if (bindFlags & BINDING_SHADER_RESOURCE)
 				{
 					buf.srv = srvHeapAlloc.Alloc();
 					if (invalid_handle == buf.srv)
@@ -834,8 +1318,9 @@ namespace bamboo
 						bufHandleAlloc.Free(handle);
 						return invalid_handle;
 					}
-				}
+				}*/
 
+				buf.size = static_cast<uint32_t>(size);
 				buf.stride = 0;
 				buf.format = FORMAT_AUTO;
 
@@ -861,7 +1346,7 @@ namespace bamboo
 				BufferDX12& buf = buffers[handle];
 
 				// update resource buffer view if needed
-				if (invalid_handle != buf.srv)
+				//if (invalid_handle != buf.srv)
 				{
 					if (stride == 0)
 					{
@@ -879,35 +1364,36 @@ namespace bamboo
 					{
 						format = FORMAT_AUTO;
 					}
-
-					if (stride != buf.stride || format != buf.format)
-					{
-						CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(
-							srvHeap->GetCPUDescriptorHandleForHeapStart(),
-							buf.srv,
-							srvHeapInc
-						);
-
-						D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
-
-						desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-						desc.Format = PixelFormatTable[format];
-						desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-						desc.Buffer.FirstElement = 0;
-						desc.Buffer.NumElements = size / stride;
-						desc.Buffer.StructureByteStride = stride;
-						desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
-
-						device->CreateShaderResourceView(buf.buffer, nullptr, srvHandle);
-					}
+					buf.stride = stride;
+					buf.format = format;
 				}
-
-				if (buf.state != D3D12_RESOURCE_STATE_COMMON)
+				/*if (stride != buf.stride || format != buf.format)
 				{
-					CD3DX12_RESOURCE_BARRIER trans = CD3DX12_RESOURCE_BARRIER::Transition(buf.buffer, buf.state, D3D12_RESOURCE_STATE_COMMON);
-					cmdList->ResourceBarrier(1, &trans);
-					buf.state = D3D12_RESOURCE_STATE_COMMON;
+					CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(
+						srvHeap->GetCPUDescriptorHandleForHeapStart(),
+						buf.srv,
+						srvHeapInc
+					);
+
+					D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
+
+					desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+					desc.Format = PixelFormatTable[format];
+					desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+					desc.Buffer.FirstElement = 0;
+					desc.Buffer.NumElements = size / stride;
+					desc.Buffer.StructureByteStride = stride;
+					desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+
+					device->CreateShaderResourceView(buf.buffer, nullptr, srvHandle);
 				}
+			}*/
+
+#if defined(USING_SYNC_UPLOAD_HEAP)
+				TransistResource(buf.buffer, buf.state, D3D12_RESOURCE_STATE_COPY_DEST);
+#else
+				TransistResource(buf.buffer, buf.state, D3D12_RESOURCE_STATE_COMMON);
+#endif
 
 				uploadHeap.UploadResource(buf.buffer, size, data, 0);
 			}
@@ -915,7 +1401,7 @@ namespace bamboo
 			void InternalResetTexture(TextureDX12& tex)
 			{
 				RELEASE(tex.texture);
-				FREE_HANDLE(tex.srv, srvHeapAlloc);
+				//FREE_HANDLE(tex.srv, srvHeapAlloc);
 				FREE_HANDLE(tex.rtv, rtvHeapAlloc);
 				FREE_HANDLE(tex.dsv, dsvHeapAlloc);
 			}
@@ -931,7 +1417,7 @@ namespace bamboo
 				tex.texture = res;
 				tex.state = initialState;
 
-				if ((bindFlags & BINDING_SHADER_RESOURCE))
+				/*if ((bindFlags & BINDING_SHADER_RESOURCE))
 				{
 					tex.srv = srvHeapAlloc.Alloc();
 					if (invalid_handle == tex.srv)
@@ -940,10 +1426,10 @@ namespace bamboo
 						texHandleAlloc.Free(handle);
 						return invalid_handle;
 					}
-				}
+				}*/
 				if (bindFlags & BINDING_RENDER_TARGET)
 				{
-					tex.rtv = srvHeapAlloc.Alloc();
+					tex.rtv = rtvHeapAlloc.Alloc();
 					if (invalid_handle == tex.rtv)
 					{
 						InternalResetTexture(tex);
@@ -1007,11 +1493,11 @@ namespace bamboo
 					return invalid_handle;
 				}
 
-				if (invalid_handle != tex.srv)
+				/*if (invalid_handle != tex.srv)
 				{
 					CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(srvHeap->GetCPUDescriptorHandleForHeapStart(), tex.srv, srvHeapInc);
 					device->CreateShaderResourceView(tex.texture, nullptr, srvHandle);
-				}
+				}*/
 
 				if (invalid_handle != tex.rtv)
 				{
@@ -1041,10 +1527,10 @@ namespace bamboo
 				D3D12_RESOURCE_FLAGS resFlag = D3D12_RESOURCE_FLAG_NONE;
 				if (!(bindFlags & BINDING_SHADER_RESOURCE))
 				{
-					tex.srv = invalid_handle;
+					//tex.srv = invalid_handle;
 					resFlag |= D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;
 				}
-				else
+				/*else
 				{
 					tex.srv = srvHeapAlloc.Alloc();
 					if (invalid_handle == tex.srv)
@@ -1053,11 +1539,11 @@ namespace bamboo
 						texHandleAlloc.Free(handle);
 						return invalid_handle;
 					}
-				}
+				}*/
 				if (bindFlags & BINDING_RENDER_TARGET)
 				{
 					resFlag |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
-					tex.rtv = srvHeapAlloc.Alloc();
+					tex.rtv = rtvHeapAlloc.Alloc();
 					if (invalid_handle == tex.rtv)
 					{
 						InternalResetTexture(tex);
@@ -1119,10 +1605,16 @@ namespace bamboo
 					);
 				}
 
+#if defined(USING_SYNC_UPLOAD_HEAP)
+				D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_COPY_DEST;
+#else
+				D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_COMMON;
+#endif
+
 				if (FAILED(device->CreateCommittedResource(&heapProp,
 					D3D12_HEAP_FLAG_DENY_BUFFERS,
 					&resDesc,
-					D3D12_RESOURCE_STATE_COMMON,
+					initialState,
 					nullptr,
 					IID_PPV_ARGS(&tex.texture))))
 				{
@@ -1131,11 +1623,11 @@ namespace bamboo
 					return invalid_handle;
 				}
 
-				if (invalid_handle != tex.srv)
+				/*if (invalid_handle != tex.srv)
 				{
 					CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(srvHeap->GetCPUDescriptorHandleForHeapStart(), tex.srv, srvHeapInc);
 					device->CreateShaderResourceView(tex.texture, nullptr, srvHandle);
-				}
+				}*/
 
 				if (invalid_handle != tex.rtv)
 				{
@@ -1149,7 +1641,7 @@ namespace bamboo
 					device->CreateDepthStencilView(tex.texture, nullptr, dsvHandle);
 				}
 
-				tex.state = D3D12_RESOURCE_STATE_COMMON;
+				tex.state = initialState;
 
 				tex.type = type;
 				tex.format = format;
@@ -1194,6 +1686,11 @@ namespace bamboo
 					}
 				}
 
+
+#if defined(USING_SYNC_UPLOAD_HEAP)
+				uint16_t handle = InternalCreateTexture(res, BINDING_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+#else
+
 				uint16_t handle = InternalCreateTexture(res, BINDING_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON);
 
 				if (invalid_handle == handle)
@@ -1201,9 +1698,11 @@ namespace bamboo
 					return invalid_handle;
 				}
 
+
 				cmdList->ResourceBarrier(1,
 					&CD3DX12_RESOURCE_BARRIER::Transition(res, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON)
 				);
+#endif
 
 				uploadHeap.UploadResource(res, 0, ptr.get(), static_cast<uint32_t>(data[0].RowPitch));
 
@@ -1228,19 +1727,18 @@ namespace bamboo
 
 				TextureDX12& tex = textures[handle];
 
-				if (tex.state != D3D12_RESOURCE_STATE_COMMON)
-				{
-					CD3DX12_RESOURCE_BARRIER trans = CD3DX12_RESOURCE_BARRIER::Transition(tex.texture, tex.state, D3D12_RESOURCE_STATE_COMMON);
-					cmdList->ResourceBarrier(1, &trans);
-					tex.state = D3D12_RESOURCE_STATE_COMMON;
-				}
+#if defined(USING_SYNC_UPLOAD_HEAP)
+				TransistResource(tex.texture, tex.state, D3D12_RESOURCE_STATE_COPY_DEST);
+#else
+				TransistResource(tex.texture, tex.state, D3D12_RESOURCE_STATE_COMMON);
+#endif
 
 				uploadHeap.UploadResource(tex.texture, 0 /* auto */, data, rowPitch);
 			}
 
 			void InternalResetSampler(SamplerDX12& samp)
 			{
-				FREE_HANDLE(samp.sampler, sampHeapAlloc);
+				//FREE_HANDLE(samp.sampler, sampHeapAlloc);
 				samp.desc = {};
 			}
 
@@ -1251,13 +1749,13 @@ namespace bamboo
 					return invalid_handle;
 
 				SamplerDX12& samp = samplers[handle];
-				samp.sampler = sampHeapAlloc.Alloc();
+				/*samp.sampler = sampHeapAlloc.Alloc();
 				if (invalid_handle == samp.sampler)
 				{
 					InternalResetSampler(samp);
 					sampHandleAlloc.Free(handle);
 					return invalid_handle;
-				}
+				}*/
 
 				samp.desc = {};
 				samp.desc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -1267,13 +1765,13 @@ namespace bamboo
 				samp.desc.MaxLOD = D3D12_FLOAT32_MAX;
 				samp.desc.MaxAnisotropy = 1;
 
-				CD3DX12_CPU_DESCRIPTOR_HANDLE sampHandle(
+				/*CD3DX12_CPU_DESCRIPTOR_HANDLE sampHandle(
 					sampHeap->GetCPUDescriptorHandleForHeapStart(),
 					samp.sampler,
 					sampHeapInc
 				);
 
-				device->CreateSampler(&samp.desc, sampHandle);
+				device->CreateSampler(&samp.desc, sampHandle);*/
 				return handle;
 			}
 
@@ -1427,7 +1925,7 @@ namespace bamboo
 			void Clear(TextureHandle handle, float color[4]) override
 			{
 				if (handle.id == invalid_handle)
-					handle.id = 0; // TODO current back buffer index
+					handle.id = backBufferIndex;
 				if (!texHandleAlloc.InUse(handle.id))
 					return;
 
@@ -1436,16 +1934,7 @@ namespace bamboo
 				if (invalid_handle == tex.rtv)
 					return;
 
-				if (tex.state != D3D12_RESOURCE_STATE_RENDER_TARGET)
-				{
-					cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-						tex.texture,
-						tex.state,
-						D3D12_RESOURCE_STATE_RENDER_TARGET
-					));
-
-					tex.state = D3D12_RESOURCE_STATE_RENDER_TARGET;
-				}
+				TransistResource(tex.texture, tex.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
 				CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(
 					rtvHeap->GetCPUDescriptorHandleForHeapStart(),
@@ -1458,7 +1947,7 @@ namespace bamboo
 			void ClearDepth(TextureHandle handle, float depth) override
 			{
 				if (handle.id == invalid_handle)
-					handle.id = 0; // TODO default depth buffer index
+					handle.id = 2; // TODO default depth buffer index
 				if (!texHandleAlloc.InUse(handle.id))
 					return;
 
@@ -1467,16 +1956,7 @@ namespace bamboo
 				if (invalid_handle == tex.dsv)
 					return;
 
-				if (tex.state != D3D12_RESOURCE_STATE_DEPTH_WRITE)
-				{
-					cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-						tex.texture,
-						tex.state,
-						D3D12_RESOURCE_STATE_DEPTH_WRITE
-					));
-
-					tex.state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-				}
+				TransistResource(tex.texture, tex.state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
 
 				CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(
 					dsvHeap->GetCPUDescriptorHandleForHeapStart(),
@@ -1493,7 +1973,7 @@ namespace bamboo
 			void ClearDepthStencil(TextureHandle handle, float depth, uint8_t stencil) override
 			{
 				if (handle.id == invalid_handle)
-					handle.id = 0; // TODO default depth buffer index
+					handle.id = 2; // TODO default depth buffer index
 				if (!texHandleAlloc.InUse(handle.id))
 					return;
 
@@ -1502,16 +1982,7 @@ namespace bamboo
 				if (invalid_handle == tex.dsv)
 					return;
 
-				if (tex.state != D3D12_RESOURCE_STATE_DEPTH_WRITE)
-				{
-					cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
-						tex.texture,
-						tex.state,
-						D3D12_RESOURCE_STATE_DEPTH_WRITE
-					));
-
-					tex.state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-				}
+				TransistResource(tex.texture, tex.state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
 
 				CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(
 					dsvHeap->GetCPUDescriptorHandleForHeapStart(),
@@ -1563,15 +2034,68 @@ namespace bamboo
 			// Draw Functions
 			void Draw(PipelineStateHandle stateHandle, const DrawCall& drawcall) override
 			{
+				if (stateHandle.id != currentPipelineState.id)
+				{
+					if (!psoHandleAlloc.InUse(stateHandle.id))
+					{
+						return; // TODO error !
+					}
 
+					PipelineStateDX12& state = pipelineStates[stateHandle.id];
+					SetPipelineState(state);
+
+					currentPipelineState = stateHandle;
+				}
+
+				BindResources(drawcall);
+				if (drawcall.HasIndexBuffer)
+				{
+					cmdList->DrawIndexedInstanced(drawcall.ElementCount, 1, 0, 0, 0);
+				}
+				else
+				{
+					cmdList->DrawInstanced(drawcall.ElementCount, 1, 0, 0);
+				}
 			}
 
 
 			// Swap Chains
-			// TODO, bind swap chains with render targets
 			void Present() override
 			{
+				TextureDX12& tex = textures[backBufferIndex];
+				TransistResource(tex.texture, tex.state, D3D12_RESOURCE_STATE_PRESENT);
 
+				cmdList->Close();
+
+				ID3D12CommandList* cmdLists[] = { cmdList };
+
+				cmdQueue->ExecuteCommandLists(1, cmdLists);
+				cmdQueue->Signal(fence, 1Ui64);
+
+				swapChain->Present(0, 0);
+
+				if (fence->GetCompletedValue() != 1Ui64)
+				{
+					fence->SetEventOnCompletion(1Ui64, fenceEvent);
+					WaitForSingleObject(fenceEvent, INFINITE);
+				}
+				fence->Signal(0Ui64);
+
+				uploadHeap.Clear();
+
+				backBufferIndex = swapChain->GetCurrentBackBufferIndex();
+
+				// clean descriptor heap  -  only safe after gpu has done using them
+				srvHeapIndex = 0;
+				sampHeapIndex = 0;
+
+				cmdAlloc->Reset();
+				cmdList->Reset(cmdAlloc, nullptr);
+				ID3D12DescriptorHeap* heaps[] = { srvHeap, sampHeap };
+				cmdList->SetDescriptorHeaps(2, heaps);
+
+				currentBindingLayout.id = invalid_handle;
+				currentPipelineState.id = invalid_handle;
 			}
 
 
@@ -1591,6 +2115,10 @@ namespace bamboo
 				CLEAR_ARRAY(pixelShaders, MaxPixelShaderCount, psHandleAlloc, InternalResetShader);
 
 #undef CLEAR_ARRAY
+
+				CloseHandle(fenceEvent);
+
+				uploadHeap.Clear();
 
 				rtvHeap->Release();
 				dsvHeap->Release();
